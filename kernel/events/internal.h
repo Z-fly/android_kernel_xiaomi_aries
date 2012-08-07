@@ -2,6 +2,7 @@
 #define _KERNEL_EVENTS_INTERNAL_H
 
 #include <linux/hardirq.h>
+#include <linux/uaccess.h>
 
 /* Buffer handling */
 
