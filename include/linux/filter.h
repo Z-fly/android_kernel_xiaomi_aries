@@ -169,28 +169,50 @@ static inline unsigned int sk_filter_len(const struct sk_filter *fp)
 
 extern int sk_filter(struct sock *sk, struct sk_buff *skb);
 
+static inline unsigned int sk_filter_size(unsigned int proglen)
+{
+		return max(sizeof(struct sk_filter),
+			offsetof(struct sk_filter, insns[proglen]));
+}
+
 #define sk_filter_proglen(fprog)			\
 		(fprog->len * sizeof(fprog->filter[0]))
 
-extern unsigned int sk_run_filter(const struct sk_buff *skb,
-				  const struct sock_filter *filter);
+unsigned int sk_run_filter(const struct sk_buff *skb,
+			   const struct sock_filter *filter);
 
-extern int sk_unattached_filter_create(struct sk_filter **pfp,
-				       struct sock_fprog *fprog);
-extern void sk_unattached_filter_destroy(struct sk_filter *fp);
+int sk_unattached_filter_create(struct sk_filter **pfp,
+				struct sock_fprog *fprog);
+void sk_unattached_filter_destroy(struct sk_filter *fp);
 
-extern int sk_attach_filter(struct sock_fprog *fprog, struct sock *sk);
-extern int sk_detach_filter(struct sock *sk);
+int sk_attach_filter(struct sock_fprog *fprog, struct sock *sk);
+int sk_detach_filter(struct sock *sk);
 
-extern int sk_chk_filter(struct sock_filter *filter, unsigned int flen);
-extern int sk_get_filter(struct sock *sk,
-			 struct sock_filter __user *filter, unsigned int len);
-extern void sk_decode_filter(struct sock_filter *filt,
-			     struct sock_filter *to);
+int sk_chk_filter(struct sock_filter *filter, unsigned int flen);
+int sk_get_filter(struct sock *sk, struct sock_filter __user *filter,
+		  unsigned int len);
+void sk_decode_filter(struct sock_filter *filt, struct sock_filter *to);
+
+void sk_filter_charge(struct sock *sk, struct sk_filter *fp);
+void sk_filter_uncharge(struct sock *sk, struct sk_filter *fp);
 
 #ifdef CONFIG_BPF_JIT
-extern void bpf_jit_compile(struct sk_filter *fp);
-extern void bpf_jit_free(struct sk_filter *fp);
+#include <stdarg.h>
+#include <linux/linkage.h>
+#include <linux/printk.h>
+
+void bpf_jit_compile(struct sk_filter *fp);
+void bpf_jit_free(struct sk_filter *fp);
+
+static inline void bpf_jit_dump(unsigned int flen, unsigned int proglen,
+				u32 pass, void *image)
+{
+	pr_err("flen=%u proglen=%u pass=%u image=%p\n",
+	       flen, proglen, pass, image);
+	if (image)
+		print_hex_dump(KERN_ERR, "JIT code: ", DUMP_PREFIX_ADDRESS,
+			       16, 1, image, proglen, false);
+}
 #define SK_RUN_FILTER(FILTER, SKB) (*FILTER->bpf_func)(SKB, FILTER->insns)
 #else
 static inline void bpf_jit_compile(struct sk_filter *fp)
