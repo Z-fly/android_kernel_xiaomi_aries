@@ -320,10 +320,8 @@ static inline unsigned int sk_filter_size(unsigned int proglen)
 		(fprog->len * sizeof(fprog->filter[0]))
 
 
-u32 sk_run_filter_int_seccomp(const struct seccomp_data *ctx,
-			      const struct sock_filter_int *insni);
-u32 sk_run_filter_int_skb(const struct sk_buff *ctx,
-			  const struct sock_filter_int *insni);
+void sk_filter_select_runtime(struct sk_filter *fp);
+void sk_filter_free(struct sk_filter *fp);
 
 int sk_convert_filter(struct sock_filter *prog, int len,
 		      struct sock_filter_int *new_prog, int *new_len);
@@ -364,11 +362,13 @@ static inline void bpf_jit_dump(unsigned int flen, unsigned int proglen,
 			       16, 1, image, proglen, false);
 }
 #else
+#include <linux/slab.h>
 static inline void bpf_jit_compile(struct sk_filter *fp)
 {
 }
 static inline void bpf_jit_free(struct sk_filter *fp)
 {
+	kfree(fp);
 }
 #endif
 
