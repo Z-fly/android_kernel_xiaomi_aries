@@ -11,6 +11,7 @@
 #ifdef __KERNEL__
 #include <linux/atomic.h>
 #include <linux/compat.h>
+#include <linux/skbuff.h>
 #include <linux/workqueue.h>
 #endif
 
@@ -540,6 +541,18 @@ static inline u16 bpf_anc_helper(const struct sock_filter *ftest)
 	default:
 		return ftest->code;
 	}
+}
+
+void *bpf_internal_load_pointer_neg_helper(const struct sk_buff *skb,
+					   int k, unsigned int size);
+
+static inline void *bpf_load_pointer(const struct sk_buff *skb, int k,
+				     unsigned int size, void *buffer)
+{
+	if (k >= 0)
+		return skb_header_pointer(skb, k, size, buffer);
+
+	return bpf_internal_load_pointer_neg_helper(skb, k, size);
 }
 
 #ifdef CONFIG_BPF_JIT
