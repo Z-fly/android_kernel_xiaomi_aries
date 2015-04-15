@@ -146,6 +146,9 @@ struct sock_fprog {	/* Required for SO_ATTACH_FILTER. */
 #define SKF_NET_OFF   (-0x100000)
 #define SKF_LL_OFF    (-0x200000)
 
+#define BPF_NET_OFF    SKF_NET_OFF
+#define BPF_LL_OFF     SKF_LL_OFF
+
 #ifdef __KERNEL__
 struct sk_buff;
 struct sock;
