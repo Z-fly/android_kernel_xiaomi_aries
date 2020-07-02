@@ -744,6 +744,7 @@ int subsys_cgroup_allow_attach(struct cgroup *cgrp,
 
 
 void cgroup_sk_alloc(struct cgroup **skcg);
+void cgroup_sk_clone(struct cgroup *skcg);
 void cgroup_sk_free(struct cgroup *skcg);
 
 struct cgroup *cgroup_get_from_fd(int fd);
@@ -777,6 +778,7 @@ static inline int subsys_cgroup_allow_attach(struct cgroup *cgrp,
 	return 0;
 }
 static inline void cgroup_sk_alloc(struct cgroup **skcg) {}
+static inline void cgroup_sk_clone(struct cgroup *skcg) {}
 static inline void cgroup_sk_free(struct cgroup *skcg) {}
 #endif /* !CONFIG_CGROUPS */
 
