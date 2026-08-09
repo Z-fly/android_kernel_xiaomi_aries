@@ -24,7 +24,7 @@
 #endif
 
 #ifdef CONFIG_ANDROID_RAM_CONSOLE
-#define ARIES_RAM_CONSOLE_SIZE	(124*SZ_1K * 2)
+#define ARIES_RAM_CONSOLE_SIZE	ARIES_PERSISTENT_RAM_SIZE
 #endif
 
 void __init aries_reserve(void);
