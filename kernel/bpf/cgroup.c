@@ -244,6 +244,11 @@ int __cgroup_bpf_attach(struct cgroup *cgrp, struct bpf_prog *prog,
 
 	/* allocate and recompute effective prog arrays */
 	rcu_read_lock();
+	/* This kernel's descendant iterator does not include cgrp itself. */
+	err = compute_effective_progs(cgrp, type, &cgrp->bpf.inactive);
+	if (err)
+		goto cleanup;
+
 	cgroup_for_each_descendant_pre(desc, cgrp) {
 
 		err = compute_effective_progs(desc, type, &desc->bpf.inactive);
@@ -252,6 +257,9 @@ int __cgroup_bpf_attach(struct cgroup *cgrp, struct bpf_prog *prog,
 	}
 
 	/* all allocations were successful. Activate all prog arrays */
+	activate_effective_progs(cgrp, type, cgrp->bpf.inactive);
+	cgrp->bpf.inactive = NULL;
+
 	cgroup_for_each_descendant_pre(desc, cgrp) {
 
 		activate_effective_progs(desc, type, desc->bpf.inactive);
@@ -270,6 +278,9 @@ cleanup:
 	/* oom while computing effective. Free all computed effective arrays
 	 * since they were not activated
 	 */
+	bpf_prog_array_free(cgrp->bpf.inactive);
+	cgrp->bpf.inactive = NULL;
+
 	cgroup_for_each_descendant_pre(desc, cgrp) {
 
 		bpf_prog_array_free(desc->bpf.inactive);
@@ -342,6 +353,11 @@ int __cgroup_bpf_detach(struct cgroup *cgrp, struct bpf_prog *prog,
 
 	/* allocate and recompute effective prog arrays */
 	rcu_read_lock();
+	/* This kernel's descendant iterator does not include cgrp itself. */
+	err = compute_effective_progs(cgrp, type, &cgrp->bpf.inactive);
+	if (err)
+		goto cleanup;
+
 	cgroup_for_each_descendant_pre(desc, cgrp) {
 
 		err = compute_effective_progs(desc, type, &desc->bpf.inactive);
@@ -350,6 +366,9 @@ int __cgroup_bpf_detach(struct cgroup *cgrp, struct bpf_prog *prog,
 	}
 
 	/* all allocations were successful. Activate all prog arrays */
+	activate_effective_progs(cgrp, type, cgrp->bpf.inactive);
+	cgrp->bpf.inactive = NULL;
+
 	cgroup_for_each_descendant_pre(desc, cgrp) {
 
 		activate_effective_progs(desc, type, desc->bpf.inactive);
@@ -373,6 +392,9 @@ cleanup:
 	/* oom while computing effective. Free all computed effective arrays
 	 * since they were not activated
 	 */
+	bpf_prog_array_free(cgrp->bpf.inactive);
+	cgrp->bpf.inactive = NULL;
+
 	cgroup_for_each_descendant_pre(desc, cgrp) {
 
 		bpf_prog_array_free(desc->bpf.inactive);
