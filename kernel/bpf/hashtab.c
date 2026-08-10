@@ -12,6 +12,7 @@
 #include <linux/bpf.h>
 #include <linux/jhash.h>
 #include <linux/filter.h>
+#include <linux/rculist.h>
 #include <linux/vmalloc.h>
 
 struct bpf_htab {
@@ -110,7 +111,7 @@ static struct htab_elem *lookup_elem_raw(struct hlist_head *head, u32 hash,
 {
 	struct htab_elem *l;
 
-	hlist_for_each_entry_rcu(l, head, hash_node)
+	hlist_for_each_entry_rcu_new(l, head, hash_node)
 		if (l->hash == hash && !memcmp(&l->key, key, key_size))
 			return l;
 
@@ -317,7 +318,7 @@ static void delete_all_elements(struct bpf_htab *htab)
 		struct hlist_node *n;
 		struct htab_elem *l;
 
-		hlist_for_each_entry_safe(l, n, head, hash_node) {
+		hlist_for_each_entry_safe_new(l, n, head, hash_node) {
 			hlist_del_rcu(&l->hash_node);
 			htab->count--;
 			kfree(l);
