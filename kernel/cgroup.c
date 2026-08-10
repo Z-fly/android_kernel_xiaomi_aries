@@ -5328,7 +5328,7 @@ void cgroup_bpf_update(struct cgroup *cgrp,
                       struct bpf_prog *prog,
                       enum bpf_attach_type type)
 {
-       struct cgroup *parent = cgroup_parent(cgrp);
+       struct cgroup *parent = cgrp->parent;
 
        mutex_lock(&cgroup_mutex);
        __cgroup_bpf_update(cgrp, parent, prog, type);
