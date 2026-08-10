@@ -26,6 +26,7 @@
 #include <linux/vmalloc.h>
 #include <linux/random.h>
 #include <linux/moduleloader.h>
+#include <linux/ratelimit.h>
 #include <asm/unaligned.h>
 #include <linux/bpf.h>
 
