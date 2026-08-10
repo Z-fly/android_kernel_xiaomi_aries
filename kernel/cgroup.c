@@ -83,6 +83,8 @@
 static DEFINE_MUTEX(cgroup_mutex);
 static DEFINE_MUTEX(cgroup_root_mutex);
 
+static struct file_system_type compat_cgroup2_fs_type;
+
 /*
  * Generate an array of cgroup subsystem pointers. At boot time, this is
  * populated up to CGROUP_BUILTIN_SUBSYS_COUNT, and modular subsystems are
@@ -103,6 +105,9 @@ static struct cgroup_subsys *subsys[CGROUP_SUBSYS_COUNT] = {
  */
 struct cgroupfs_root {
 	struct super_block *sb;
+
+	/* A root-only cgroup2 facade used as the cgroup BPF attach point. */
+	bool is_compat_v2;
 
 	/*
 	 * The bitmask of subsystems intended to be attached to this
@@ -1532,11 +1537,17 @@ static struct dentry *cgroup_mount(struct file_system_type *fs_type,
 	struct super_block *sb;
 	struct cgroupfs_root *new_root;
 	struct inode *inode;
+	bool is_v2 = fs_type == &compat_cgroup2_fs_type;
 
 	/* First find the desired set of subsystems */
-	mutex_lock(&cgroup_mutex);
-	ret = parse_cgroupfs_options(data, &opts);
-	mutex_unlock(&cgroup_mutex);
+	if (is_v2) {
+		memset(&opts, 0, sizeof(opts));
+		opts.none = true;
+	} else {
+		mutex_lock(&cgroup_mutex);
+		ret = parse_cgroupfs_options(data, &opts);
+		mutex_unlock(&cgroup_mutex);
+	}
 	if (ret)
 		goto out_err;
 
@@ -1549,6 +1560,7 @@ static struct dentry *cgroup_mount(struct file_system_type *fs_type,
 		ret = PTR_ERR(new_root);
 		goto drop_modules;
 	}
+	new_root->is_compat_v2 = is_v2;
 	opts.new_root = new_root;
 
 	/* Locate an existing or new sb for this hierarchy */
@@ -1721,6 +1733,12 @@ static void cgroup_kill_sb(struct super_block *sb) {
 
 static struct file_system_type cgroup_fs_type = {
 	.name = "cgroup",
+	.mount = cgroup_mount,
+	.kill_sb = cgroup_kill_sb,
+};
+
+static struct file_system_type compat_cgroup2_fs_type = {
+	.name = "cgroup2",
 	.mount = cgroup_mount,
 	.kill_sb = cgroup_kill_sb,
 };
@@ -4033,6 +4051,14 @@ static int cgroup_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	struct cgroup *c_parent = dentry->d_parent->d_fsdata;
 
+	/*
+	 * The compatibility hierarchy only provides a stable root fd for
+	 * BPF_PROG_ATTACH.  Creating v1-backed process groups here makes old
+	 * cgroup task teardown race with Android's v2 process-group cleanup.
+	 */
+	if (c_parent->root->is_compat_v2)
+		return -EOPNOTSUPP;
+
 	/* Do not accept '\n' to prevent making /proc/<pid>/cgroup unparsable.
 	 */
 	if (strchr(dentry->d_name.name, '\n'))
@@ -4565,6 +4591,12 @@ int __init cgroup_init(void)
 	}
 
 	err = register_filesystem(&cgroup_fs_type);
+	if (err < 0) {
+		kobject_put(cgroup_kobj);
+		goto out;
+	}
+
+	err = register_filesystem(&compat_cgroup2_fs_type);
 	if (err < 0) {
 		kobject_put(cgroup_kobj);
 		goto out;
@@ -5294,7 +5326,7 @@ static struct cgroupfs_root *findBpfCg(void){
 	struct cgroupfs_root *root;
 
 	for_each_active_root(root)
-		if(root->subsys_bits == 0)
+		if (root->is_compat_v2)
 			return root;
 
 	return NULL;
@@ -5306,22 +5338,22 @@ void cgroup_sk_alloc(struct cgroup **skcg)
 	struct cgroup *cgrp;
 	static struct cgroupfs_root *bpfRoot = NULL;
 
+	*skcg = NULL;
+
 	/* Don't associate the sock with unrelated interrupted task's cgroup. */
 	if (in_interrupt())
 		return;
 
-	if(bpfRoot == NULL)
+	if (bpfRoot == NULL)
 		bpfRoot = findBpfCg();
 
-	if(bpfRoot){
+	if (bpfRoot) {
 		mutex_lock(&cgroup_mutex);
 		cgrp = task_cgroup_from_root(current, bpfRoot);
-	        atomic_inc(&cgrp->count);
+		atomic_inc(&cgrp->count);
 		mutex_unlock(&cgroup_mutex);
 		*skcg = cgrp;
 	}
-	else
-		*skcg = NULL;
 }
 
 void cgroup_sk_clone(struct cgroup *skcg)
