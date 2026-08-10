@@ -451,11 +451,7 @@ struct bpf_prog {
 	};
 };
 
-int sk_filter_trim_cap(struct sock *sk, struct sk_buff *skb, unsigned int cap);
-static inline int sk_filter(struct sock *sk, struct sk_buff *skb)
-{
-	return sk_filter_trim_cap(sk, skb, 1);
-}
+int sk_filter(struct sock *sk, struct sk_buff *skb);
 
 struct sk_filter {
 	atomic_t	refcnt;
