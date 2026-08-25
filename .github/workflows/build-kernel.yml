@@ -62,16 +62,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            bc \
-            bison \
-            build-essential \
-            ccache \
-            flex \
-            git \
-            libssl-dev \
-            python3 \
-            zip
+          sudo apt-get install -y bc bison build-essential ccache flex git libssl-dev python3 zip
       - name: Restore ccache
         uses: actions/cache@v5
         with:
@@ -89,12 +80,7 @@ jobs:
       - name: Checkout AOSP GCC 4.8
         run: |
           sudo install -d -o "$USER" -g "$(id -gn)" /opt/toolchain
-          git clone \
-            --depth=1 \
-            --branch "$TOOLCHAIN_REF" \
-            --single-branch \
-            "$TOOLCHAIN_REPOSITORY" \
-            "$TOOLCHAIN_DIR"
+          git clone --depth=1 --branch "$TOOLCHAIN_REF" --single-branch "$TOOLCHAIN_REPOSITORY" "$TOOLCHAIN_DIR"
           test -x "${TOOLCHAIN_PREFIX}gcc"
           echo "Toolchain:"
           "${TOOLCHAIN_PREFIX}gcc" --version
@@ -130,10 +116,7 @@ jobs:
             LOCALVERSION=""
           )
           make "${MAKE_ARGS[@]}" "${EXTRA_ARGS[@]}" aries-perf-user_defconfig
-          scripts/config \
-            --file "$OUT_DIR/.config" \
-            --set-str LOCALVERSION "$KERNEL_LOCALVERSION" \
-            --disable LOCALVERSION_AUTO
+          scripts/config --file "$OUT_DIR/.config" --set-str LOCALVERSION "$KERNEL_LOCALVERSION" --disable LOCALVERSION_AUTO
           make "${MAKE_ARGS[@]}" "${EXTRA_ARGS[@]}" silentoldconfig
           grep -qx 'CONFIG_KSU=y' "$OUT_DIR/.config"
           grep -qx 'CONFIG_KSU_LSM_SECURITY_HOOKS=y' "$OUT_DIR/.config"
@@ -210,11 +193,8 @@ jobs:
           ZIP_NAME="AnyKernel3-KernelSU-aries-${{ github.run_number }}.zip"
           (
             cd AnyKernel3
-            zip -r9 "$GITHUB_WORKSPACE/artifacts/$ZIP_NAME" . \
-              -x '*.git*' 'README.md'
+            zip -r9 "$GITHUB_WORKSPACE/artifacts/$ZIP_NAME" . -x '*.git*' 'README.md'
           )
-          cp "$IMAGE_PATH" artifacts/zImage
-          git -C KernelSU rev-parse HEAD > artifacts/KernelSU-commit.txt
       - name: Show ccache statistics
         if: always()
         run: ccache --show-stats
@@ -223,6 +203,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: aries-kernelsu-${{ github.run_number }}
-          path: artifacts/
+          path: artifacts/AnyKernel3-KernelSU-aries-${{ github.run_number }}.zip
+          archive: false
           if-no-files-found: error
           retention-days: 30
