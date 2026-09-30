@@ -3,7 +3,7 @@ name: Update KernelSU Submodule
 on:
   workflow_dispatch:
   schedule:
-    - cron: '13 8 * * *'
+    - cron: '17 */6 * * *'
       timezone: 'Asia/Shanghai'
 
 permissions:
@@ -34,10 +34,20 @@ jobs:
           set -euo pipefail
           original_head=$(git rev-parse HEAD)
           commit_message='Update KernelSU Submodule'
+          kernelsu_branch=$(git config --file .gitmodules submodule.KernelSU.branch)
+
+          if [ -z "$kernelsu_branch" ]; then
+            echo 'KernelSU branch is not configured in .gitmodules.' >&2
+            exit 1
+          fi
 
           git submodule sync -- KernelSU
-          git -C KernelSU fetch --no-tags origin master
-          git -C KernelSU checkout --detach FETCH_HEAD
+          pinned_commit=$(git -C KernelSU rev-parse HEAD)
+          git -C KernelSU fetch --no-tags origin "$kernelsu_branch"
+          upstream_commit=$(git -C KernelSU rev-parse FETCH_HEAD)
+          echo "KernelSU pinned commit:   $pinned_commit"
+          echo "KernelSU upstream commit: $upstream_commit ($kernelsu_branch)"
+          git -C KernelSU checkout --detach "$upstream_commit"
           git -C KernelSU submodule update --init --recursive
           git add -- KernelSU
 
