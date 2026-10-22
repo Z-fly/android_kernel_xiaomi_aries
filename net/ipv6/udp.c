@@ -45,12 +45,21 @@
 #include <net/tcp_states.h>
 #include <net/ip6_checksum.h>
 #include <net/xfrm.h>
+#include <net/inet6_hashtables.h>
+#include <net/sock_reuseport.h>
 
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include "udp_impl.h"
 
-int ipv6_rcv_saddr_equal(const struct sock *sk, const struct sock *sk2)
+/* match_wildcard == true:  IPV6_ADDR_ANY equals to any IPv6 addresses if IPv6
+ *                          only, and any IPv4 addresses if not IPv6 only
+ * match_wildcard == false: addresses must be exactly the same, i.e.
+ *                          IPV6_ADDR_ANY only equals to IPV6_ADDR_ANY,
+ *                          and 0.0.0.0 equals to 0.0.0.0 only
+ */
+int ipv6_rcv_saddr_equal(const struct sock *sk, const struct sock *sk2,
+			 bool match_wildcard)
 {
 	const struct in6_addr *sk_rcv_saddr6 = &inet6_sk(sk)->rcv_saddr;
 	const struct in6_addr *sk2_rcv_saddr6 = inet6_rcv_saddr(sk2);
@@ -62,16 +71,24 @@ int ipv6_rcv_saddr_equal(const struct sock *sk, const struct sock *sk2)
 	int addr_type2 = sk2_rcv_saddr6 ? ipv6_addr_type(sk2_rcv_saddr6) : IPV6_ADDR_MAPPED;
 
 	/* if both are mapped, treat as IPv4 */
-	if (addr_type == IPV6_ADDR_MAPPED && addr_type2 == IPV6_ADDR_MAPPED)
-		return (!sk2_ipv6only &&
-			(!sk1_rcv_saddr || !sk2_rcv_saddr ||
-			  sk1_rcv_saddr == sk2_rcv_saddr));
+	if (addr_type == IPV6_ADDR_MAPPED && addr_type2 == IPV6_ADDR_MAPPED) {
+		if (!sk2_ipv6only) {
+			if (sk1_rcv_saddr == sk2_rcv_saddr)
+				return 1;
+			if (!sk1_rcv_saddr || !sk2_rcv_saddr)
+				return match_wildcard;
+		}
+		return 0;
+	}
 
-	if (addr_type2 == IPV6_ADDR_ANY &&
+	if (addr_type == IPV6_ADDR_ANY && addr_type2 == IPV6_ADDR_ANY)
+		return 1;
+
+	if (addr_type2 == IPV6_ADDR_ANY && match_wildcard &&
 	    !(sk2_ipv6only && addr_type == IPV6_ADDR_MAPPED))
 		return 1;
 
-	if (addr_type == IPV6_ADDR_ANY &&
+	if (addr_type == IPV6_ADDR_ANY && match_wildcard &&
 	    !(sk_ipv6only && addr_type2 == IPV6_ADDR_MAPPED))
 		return 1;
 
@@ -202,7 +219,8 @@ static struct sock *udp6_lib_lookup2(struct net *net,
 {
 	struct sock *sk, *result;
 	struct hlist_nulls_node *node;
-	int score, badness;
+	int score, badness, matches = 0, reuseport = 0;
+	u32 hash = 0;
 
 begin:
 	result = NULL;
@@ -213,8 +231,24 @@ begin:
 		if (score > badness) {
 			result = sk;
 			badness = score;
-			if (score == SCORE2_MAX)
+			reuseport = sk->sk_reuseport;
+			if (reuseport) {
+				struct sock *sk2;
+				hash = inet6_ehashfn(net, daddr, hnum,
+						     saddr, sport);
+				sk2 = reuseport_select_sock(sk, hash, NULL, 0);
+				if (sk2) {
+					result = sk2;
+					goto exact_match;
+				}
+				matches = 1;
+			} else if (score == SCORE2_MAX)
 				goto exact_match;
+		} else if (score == badness && reuseport) {
+			matches++;
+			if (((u64)hash * matches) >> 32 == 0)
+				result = sk;
+			hash = next_pseudo_random32(hash);
 		}
 	}
 	/*
@@ -241,14 +275,16 @@ exact_match:
 struct sock *__udp6_lib_lookup(struct net *net,
 				      const struct in6_addr *saddr, __be16 sport,
 				      const struct in6_addr *daddr, __be16 dport,
-				      int dif, struct udp_table *udptable)
+				      int dif, struct udp_table *udptable,
+				      struct sk_buff *skb)
 {
 	struct sock *sk, *result;
 	struct hlist_nulls_node *node;
 	unsigned short hnum = ntohs(dport);
 	unsigned int hash2, slot2, slot = udp_hashfn(net, hnum, udptable->mask);
 	struct udp_hslot *hslot2, *hslot = &udptable->hash[slot];
-	int score, badness;
+	int score, badness, matches = 0, reuseport = 0;
+	u32 hash = 0;
 
 	rcu_read_lock();
 	if (hslot->count > 10) {
@@ -283,6 +319,24 @@ begin:
 		if (score > badness) {
 			result = sk;
 			badness = score;
+			reuseport = sk->sk_reuseport;
+			if (reuseport) {
+				struct sock *sk2;
+				hash = inet6_ehashfn(net, daddr, hnum,
+						     saddr, sport);
+				sk2 = reuseport_select_sock(sk, hash, skb,
+							sizeof(struct udphdr));
+				if (sk2) {
+					result = sk2;
+					goto found;
+				}
+				matches = 1;
+			}
+		} else if (score == badness && reuseport) {
+			matches++;
+			if (((u64)hash * matches) >> 32 == 0)
+				result = sk;
+			hash = next_pseudo_random32(hash);
 		}
 	}
 	/*
@@ -294,6 +348,7 @@ begin:
 		goto begin;
 
 	if (result) {
+found:
 		if (unlikely(!atomic_inc_not_zero_hint(&result->sk_refcnt, 2)))
 			result = NULL;
 		else if (unlikely(compute_score(result, net, hnum, saddr, sport,
@@ -318,13 +373,13 @@ static struct sock *__udp6_lib_lookup_skb(struct sk_buff *skb,
 		return sk;
 	return __udp6_lib_lookup(dev_net(skb_dst(skb)->dev), &iph->saddr, sport,
 				 &iph->daddr, dport, inet6_iif(skb),
-				 udptable);
+				 udptable, skb);
 }
 
 struct sock *udp6_lib_lookup(struct net *net, const struct in6_addr *saddr, __be16 sport,
 			     const struct in6_addr *daddr, __be16 dport, int dif)
 {
-	return __udp6_lib_lookup(net, saddr, sport, daddr, dport, dif, &udp_table);
+	return __udp6_lib_lookup(net, saddr, sport, daddr, dport, dif, &udp_table, NULL);
 }
 EXPORT_SYMBOL_GPL(udp6_lib_lookup);
 
@@ -423,6 +478,10 @@ try_again:
 				sin6->sin6_scope_id = IP6CB(skb)->iif;
 		}
 		*addr_len = sizeof(*sin6);
+		err = BPF_CGROUP_SOCK_ADDR_LOCK(sk, (struct sockaddr *)sin6,
+					       sizeof(*sin6), BPF_CGROUP_UDP6_RECVMSG);
+		if (err)
+			goto out_free;
 	}
 	if (is_udp4) {
 		if (inet->cmsg_flags)
@@ -472,7 +531,7 @@ void __udp6_lib_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
 	int err;
 
 	sk = __udp6_lib_lookup(dev_net(skb->dev), daddr, uh->dest,
-			       saddr, uh->source, inet6_iif(skb), udptable);
+			       saddr, uh->source, inet6_iif(skb), udptable, skb);
 	if (sk == NULL)
 		return;
 
@@ -969,6 +1028,7 @@ int udpv6_sendmsg(struct kiocb *iocb, struct sock *sk,
 	int corkreq = up->corkflag || msg->msg_flags&MSG_MORE;
 	int err;
 	int connected = 0;
+	struct sockaddr_in6 bpf_addr;
 	int is_udplite = IS_UDPLITE(sk);
 	int (*getfrag)(void *, char *, int, int, int, struct sk_buff *);
 
@@ -1083,6 +1143,23 @@ do_udp_sendmsg:
 		connected = 1;
 	}
 
+	memset(&bpf_addr, 0, sizeof(bpf_addr));
+	bpf_addr.sin6_family = AF_INET6;
+	bpf_addr.sin6_port = fl6.fl6_dport;
+	bpf_addr.sin6_addr = *daddr;
+	err = BPF_CGROUP_SOCK_ADDR_LOCK(sk, (struct sockaddr *)&bpf_addr,
+				       sizeof(bpf_addr), BPF_CGROUP_UDP6_SENDMSG);
+	if (err)
+		goto out;
+	if (!ipv6_addr_equal(daddr, &bpf_addr.sin6_addr) ||
+	    fl6.fl6_dport != bpf_addr.sin6_port)
+		connected = 0;
+	daddr = &bpf_addr.sin6_addr;
+	fl6.fl6_dport = bpf_addr.sin6_port;
+	if (!fl6.fl6_dport) {
+		err = -EINVAL;
+		goto out;
+	}
 	if (!fl6.flowi6_oif)
 		fl6.flowi6_oif = sk->sk_bound_dev_if;
 

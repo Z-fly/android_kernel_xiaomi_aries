@@ -425,8 +425,18 @@ lookup_protocol:
 
 	if (sk->sk_prot->init) {
 		err = sk->sk_prot->init(sk);
-		if (err)
+		if (err) {
 			sk_common_release(sk);
+			goto out;
+		}
+	}
+
+	if (!kern) {
+		err = BPF_CGROUP_RUN_PROG_INET_SOCK(sk);
+		if (err) {
+			sk_common_release(sk);
+			goto out;
+		}
 	}
 out:
 	return err;
@@ -502,6 +512,10 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 		    addr->sin_addr.s_addr != htonl(INADDR_ANY))
 			goto out;
 	}
+
+	err = BPF_CGROUP_SOCK_ADDR_LOCK(sk, uaddr, addr_len, BPF_CGROUP_INET4_BIND);
+	if (err)
+		goto out;
 
 	chk_addr_ret = inet_addr_type(sock_net(sk), addr->sin_addr.s_addr);
 
@@ -579,6 +593,13 @@ int inet_dgram_connect(struct socket *sock, struct sockaddr * uaddr,
 
 	if (!inet_sk(sk)->inet_num && inet_autobind(sk))
 		return -EAGAIN;
+	{
+		int err = BPF_CGROUP_SOCK_ADDR_LOCK(sk, uaddr, addr_len,
+			sk->sk_family == AF_INET6 ? BPF_CGROUP_INET6_CONNECT :
+			BPF_CGROUP_INET4_CONNECT);
+		if (err)
+			return err;
+	}
 	return sk->sk_prot->connect(sk, (struct sockaddr *)uaddr, addr_len);
 }
 EXPORT_SYMBOL(inet_dgram_connect);
@@ -644,6 +665,11 @@ int inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 		if (sk->sk_state != TCP_CLOSE)
 			goto out;
 
+		err = BPF_CGROUP_SOCK_ADDR(sk, uaddr, addr_len,
+			sk->sk_family == AF_INET6 ? BPF_CGROUP_INET6_CONNECT :
+			BPF_CGROUP_INET4_CONNECT);
+		if (err)
+			goto out;
 		err = sk->sk_prot->connect(sk, uaddr, addr_len);
 		if (err < 0)
 			goto out;

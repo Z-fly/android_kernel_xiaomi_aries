@@ -41,6 +41,7 @@
 
 #define SO_ATTACH_FILTER	0x001a
 #define SO_DETACH_FILTER        0x001b
+#define SO_GET_FILTER		SO_ATTACH_FILTER
 
 #define SO_PEERNAME		0x001c
 #define SO_TIMESTAMP		0x001d
@@ -65,10 +66,26 @@
 /* Instruct lower device to use last 4-bytes of skb data as FCS */
 #define SO_NOFCS		0x0027
 
+#define SO_LOCK_FILTER		0x0028
+
+#define SO_ATTACH_BPF		0x0034
+#define SO_DETACH_BPF		SO_DETACH_FILTER
 
 /* Security levels - as per NRL IPv6 - don't actually do anything */
 #define SO_SECURITY_AUTHENTICATION		0x5001
 #define SO_SECURITY_ENCRYPTION_TRANSPORT	0x5002
 #define SO_SECURITY_ENCRYPTION_NETWORK		0x5004
+
+
+#define SO_MAX_PACING_RATE	0x0030
+#define SO_ATTACH_BPF		0x0034
+#define SO_DETACH_BPF		SO_DETACH_FILTER
+
+
+#define SO_REUSEPORT	0x0200
+
+
+#define SO_ATTACH_REUSEPORT_CBPF	0x0035
+#define SO_ATTACH_REUSEPORT_EBPF	0x0036
 
 #endif /* _ASM_SOCKET_H */

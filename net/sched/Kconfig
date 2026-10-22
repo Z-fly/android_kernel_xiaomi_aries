@@ -251,14 +251,17 @@ config NET_SCH_QFQ
 	  If unsure, say N.
 
 config NET_SCH_INGRESS
-	tristate "Ingress Qdisc"
+	tristate "Ingress/classifier-action Qdisc"
 	depends on NET_CLS_ACT
+	select NET_EGRESS
 	---help---
-	  Say Y here if you want to use classifiers for incoming packets.
+	  Say Y here if you want to use classifiers for incoming and/or outgoing
+	  packets. This qdisc doesn't do anything else besides running classifiers,
+	  which can also have actions attached to them.
 	  If unsure, say Y.
 
-	  To compile this code as a module, choose M here: the
-	  module will be called sch_ingress.
+	  To compile this code as a module, choose M here: the module will be
+	  called sch_ingress with alias of sch_clsact.
 
 config NET_SCH_PLUG
 	tristate "Plug network traffic until release (PLUG)"
@@ -300,6 +303,16 @@ config NET_CLS_BASIC
 
 	  To compile this code as a module, choose M here: the
 	  module will be called cls_basic.
+
+config NET_CLS_MATCHALL
+	tristate "Match-all classifier"
+	select NET_CLS
+	---help---
+	  Match every packet and apply a traffic-control action or class ID.
+	  Hardware offload is not supported by this kernel.
+
+	  To compile this code as a module, choose M here: the
+	  module will be called cls_matchall.
 
 config NET_CLS_TCINDEX
 	tristate "Traffic-Control Index (TCINDEX)"
@@ -406,6 +419,16 @@ config NET_CLS_CGROUP
 
 	  To compile this code as a module, choose M here: the
 	  module will be called cls_cgroup.
+
+config NET_CLS_BPF
+	tristate "BPF-based classifier"
+	select NET_CLS
+	---help---
+	  If you say Y here, you will be able to classify packets based on
+	  programmable BPF (JIT'ed) filters as an alternative to ematches.
+
+	  To compile this code as a module, choose M here: the module will
+	  be called cls_bpf.
 
 config NET_EMATCH
 	bool "Extended Matches"
@@ -596,6 +619,18 @@ config NET_ACT_CSUM
 
 	  To compile this code as a module, choose M here: the
 	  module will be called act_csum.
+
+config NET_ACT_BPF
+        tristate "BPF based action"
+        depends on NET_CLS_ACT
+        ---help---
+	  Say Y here to execute BPF code on packets. The BPF code will decide
+	  if the packet should be dropped or not.
+
+	  If unsure, say N.
+
+	  To compile this code as a module, choose M here: the
+	  module will be called act_bpf.
 
 config NET_CLS_IND
 	bool "Incoming device classification"

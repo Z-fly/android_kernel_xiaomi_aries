@@ -560,14 +560,7 @@ out_unlocked:
 #endif
 
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 9, 0)
-	/* EMPTY */
-#else /* LINUX_VERSION_CODE < KERNEL_VERSION(3, 9, 0) */
-static inline struct inode *file_inode(const struct file *f)
-{
-	return f->f_dentry->d_inode;
-}
-#endif
+
 
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0)
@@ -694,11 +687,6 @@ static inline bool __cancel_delayed_work_sync(struct sdfat_sb_info *sbi)
 {
 	/* DO NOTHING */
 	return 0;
-}
-
-static inline void clear_inode(struct inode *inode)
-{
-	end_writeback(inode);
 }
 
 static int sdfat_revalidate(struct dentry *dentry, unsigned int flags)

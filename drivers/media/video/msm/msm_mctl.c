@@ -680,10 +680,20 @@ register_sdev_failed:
 static int msm_mctl_release(struct msm_cam_media_controller *p_mctl)
 {
 	int rc = 0;
-	struct msm_sensor_ctrl_t *s_ctrl = get_sctrl(p_mctl->sensor_sdev);
-	struct msm_camera_sensor_info *sinfo =
-		(struct msm_camera_sensor_info *) s_ctrl->sensordata;
-	struct msm_camera_device_platform_data *camdev = sinfo->pdata;
+	struct msm_sensor_ctrl_t *s_ctrl;
+	struct msm_camera_sensor_info *sinfo;
+	struct msm_camera_device_platform_data *camdev;
+
+	if (!p_mctl || !p_mctl->sensor_sdev) {
+		pr_err("%s: mctl already released\n", __func__);
+		return rc;
+	}
+
+	p_mctl->mctl_release = NULL;
+
+	s_ctrl = get_sctrl(p_mctl->sensor_sdev);
+	sinfo = (struct msm_camera_sensor_info *) s_ctrl->sensordata;
+	camdev = sinfo->pdata;
 
 	v4l2_subdev_call(p_mctl->sensor_sdev, core, ioctl,
 		VIDIOC_MSM_SENSOR_RELEASE, NULL);
@@ -691,30 +701,36 @@ static int msm_mctl_release(struct msm_cam_media_controller *p_mctl)
 	if (p_mctl->csic_sdev) {
 		v4l2_subdev_call(p_mctl->csic_sdev, core, ioctl,
 			VIDIOC_MSM_CSIC_RELEASE, NULL);
+		p_mctl->csic_sdev = NULL;
 	}
 
-	if (camdev->is_vpe) {
+	if (camdev->is_vpe && p_mctl->vpe_sdev) {
 		v4l2_subdev_call(p_mctl->vpe_sdev, core, ioctl,
 			VIDIOC_MSM_VPE_RELEASE, NULL);
+		p_mctl->vpe_sdev = NULL;
 	}
 
 	if (p_mctl->axi_sdev) {
 		v4l2_subdev_call(p_mctl->axi_sdev, core, ioctl,
 			VIDIOC_MSM_AXI_RELEASE, NULL);
+		p_mctl->axi_sdev = NULL;
 	}
 
 	if (p_mctl->isp_sdev && p_mctl->isp_sdev->isp_release)
 		p_mctl->isp_sdev->isp_release(p_mctl,
 			p_mctl->isp_sdev->sd);
+	p_mctl->isp_sdev = NULL;
 
 	if (p_mctl->csid_sdev) {
 		v4l2_subdev_call(p_mctl->csid_sdev, core, ioctl,
 			VIDIOC_MSM_CSID_RELEASE, NULL);
+		p_mctl->csid_sdev = NULL;
 	}
 
 	if (p_mctl->csiphy_sdev) {
 		v4l2_subdev_call(p_mctl->csiphy_sdev, core, ioctl,
 			VIDIOC_MSM_CSIPHY_RELEASE, NULL);
+		p_mctl->csiphy_sdev = NULL;
 	}
 
 	pm_qos_update_request(&p_mctl->pm_qos_req_list,
@@ -727,6 +743,7 @@ static int msm_mctl_release(struct msm_cam_media_controller *p_mctl)
 	}
 
 	v4l2_subdev_call(p_mctl->sensor_sdev, core, s_power, 0);
+	p_mctl->sensor_sdev = NULL;
 
 	pm_qos_update_request(&p_mctl->idle_pm_qos, PM_QOS_DEFAULT_VALUE);
 	return rc;
@@ -987,23 +1004,25 @@ static int msm_mctl_dev_close(struct file *f)
 		return -EINVAL;
 	}
 
-	pmctl = msm_camera_get_mctl(pcam->mctl_handle);
 	mutex_lock(&pcam->mctl_node.dev_lock);
+	pmctl = msm_camera_get_mctl(pcam->mctl_handle);
 	D("%s : active %d ", __func__, pcam->mctl_node.active);
-	if (pcam->mctl_node.active == 1) {
-		rc = msm_cam_server_close_mctl_session(pcam);
-		if (rc < 0) {
-			pr_err("%s: mctl session close failed %d",
-				__func__, rc);
-			mutex_unlock(&pcam->mctl_node.dev_lock);
-			return rc;
-		}
-		pmctl = NULL;
-	}
 	pcam_inst->streamon = 0;
 	pcam->mctl_node.dev_inst_map[pcam_inst->image_mode] = NULL;
-	if (pcam_inst->vbqueue_initialized)
+	/*
+	 * vb2 buffer cleanup needs the media controller's ION client.  Keep
+	 * the mctl session alive until all of the buffers have been released.
+	 */
+	if (pcam_inst->vbqueue_initialized) {
 		vb2_queue_release(&pcam_inst->vid_bufq);
+		pcam_inst->vbqueue_initialized = 0;
+	}
+	if (pcam->mctl_node.active == 1) {
+		rc = msm_cam_server_close_mctl_session(pcam);
+		if (rc < 0)
+			pr_err("%s: mctl session close failed %d",
+				__func__, rc);
+	}
 	D("%s Closing down instance %p ", __func__, pcam_inst);
 	pcam->mctl_node.dev_inst[pcam_inst->my_index] = NULL;
 	v4l2_fh_del(&pcam_inst->eventHandle);

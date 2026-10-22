@@ -391,10 +391,28 @@
 		CALL(sys_finit_module)
 /* 380 */	CALL(sys_ni_syscall)
 		CALL(sys_ni_syscall)
-		CALL(sys_ni_syscall)
+		CALL(sys_renameat2)
 		CALL(sys_seccomp)
 		CALL(sys_getrandom)
 /* 385 */	CALL(sys_memfd_create)
+		CALL(sys_bpf)
+		CALL(sys_ni_syscall)
+		.rept 397 - 388
+		CALL(sys_ni_syscall)
+		.endr
+/* 397 */	CALL(sys_statx)
+		.rept 424 - 398
+		CALL(sys_ni_syscall)
+		.endr
+/* 424 */	CALL(sys_pidfd_send_signal)
+		.rept 434 - 425
+		CALL(sys_ni_syscall)
+		.endr
+/* 434 */	CALL(sys_pidfd_open)
+		.rept 448 - 435
+		CALL(sys_ni_syscall)
+		.endr
+/* 448 */	CALL(sys_process_mrelease)
 #ifndef syscalls_counted
 .equ syscalls_padding, ((NR_syscalls + 3) & ~3) - NR_syscalls
 #define syscalls_counted

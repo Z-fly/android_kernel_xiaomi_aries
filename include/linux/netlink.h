@@ -105,6 +105,7 @@ struct nlmsgerr {
 #define NETLINK_PKTINFO		3
 #define NETLINK_BROADCAST_ERROR	4
 #define NETLINK_NO_ENOBUFS	5
+#define NETLINK_CAP_ACK		10
 
 struct nl_pktinfo {
 	__u32	group;
@@ -166,6 +167,7 @@ struct netlink_skb_parms {
 	struct ucred		creds;		/* Skb credentials	*/
 	__u32			pid;
 	__u32			dst_group;
+	struct sock		*sk;
 };
 
 #define NETLINK_CB(skb)		(*(struct netlink_skb_parms*)&((skb)->cb))

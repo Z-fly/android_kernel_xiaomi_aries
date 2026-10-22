@@ -1058,6 +1058,12 @@ struct net_device {
 	netdev_features_t	wanted_features;
 	/* mask of features inheritable by VLAN devices */
 	netdev_features_t	vlan_features;
+	/* mask of features inherited by encapsulating devices
+	 * This field indicates what encapsulation offloads
+	 * the hardware is capable of doing, and drivers will
+	 * need to set them appropriately.
+	 */
+	netdev_features_t	hw_enc_features;
 
 	/* Interface index. Unique device identifier	*/
 	int			ifindex;
@@ -1187,6 +1193,11 @@ struct net_device {
 	void __rcu		*rx_handler_data;
 
 	struct netdev_queue __rcu *ingress_queue;
+#ifdef CONFIG_NET_CLS_ACT
+	struct tcf_proto __rcu	*ingress_cl_list;
+	struct tcf_proto __rcu	*egress_cl_list;
+#endif
+
 
 /*
  * Cache lines mostly used on transmit path
@@ -1622,6 +1633,14 @@ extern void		synchronize_net(void);
 extern int		init_dummy_netdev(struct net_device *dev);
 extern void		netdev_resync_ops(struct net_device *dev);
 
+DECLARE_PER_CPU(int, xmit_recursion);
+#define XMIT_RECURSION_LIMIT	10
+
+static inline int dev_recursion_level(void)
+{
+	return this_cpu_read(xmit_recursion);
+}
+
 extern struct net_device	*dev_get_by_index(struct net *net, int ifindex);
 extern struct net_device	*__dev_get_by_index(struct net *net, int ifindex);
 extern struct net_device	*dev_get_by_index_rcu(struct net *net, int ifindex);
@@ -1765,6 +1784,8 @@ static inline void input_queue_tail_incr_save(struct softnet_data *sd,
 }
 
 DECLARE_PER_CPU_ALIGNED(struct softnet_data, softnet_data);
+#define XMIT_RECURSION_LIMIT   10
+DECLARE_PER_CPU(int, xmit_recursion);
 
 extern void __netif_schedule(struct Qdisc *q);
 
@@ -2586,7 +2607,6 @@ extern void netdev_stats_to_stats64(struct rtnl_link_stats64 *stats64,
 extern int		netdev_max_backlog;
 extern int		netdev_tstamp_prequeue;
 extern int		weight_p;
-extern int		bpf_jit_enable;
 extern int		netdev_set_master(struct net_device *dev, struct net_device *master);
 extern int netdev_set_bond_master(struct net_device *dev,
 				  struct net_device *master);
@@ -2813,5 +2833,11 @@ do {								\
 #endif
 
 #endif /* __KERNEL__ */
+
+/* This device needs to keep skb dst for qdisc enqueue or ndo_start_xmit() */
+static inline void netif_keep_dst(struct net_device *dev)
+{
+	dev->priv_flags &= ~IFF_XMIT_DST_RELEASE;
+}
 
 #endif	/* _LINUX_NETDEVICE_H */

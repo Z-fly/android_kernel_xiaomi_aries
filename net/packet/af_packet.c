@@ -1171,11 +1171,7 @@ static void packet_sock_destruct(struct sock *sk)
 
 static struct sock *fanout_demux_hash(struct packet_fanout *f, struct sk_buff *skb, unsigned int num)
 {
-	u32 idx, hash = skb->rxhash;
-
-	idx = ((u64)hash * num) >> 32;
-
-	return f->arr[idx];
+	return f->arr[reciprocal_scale(skb->rxhash, num)];
 }
 
 static struct sock *fanout_demux_lb(struct packet_fanout *f, struct sk_buff *skb, unsigned int num)
@@ -1558,16 +1554,16 @@ out_free:
 	return err;
 }
 
-static unsigned int run_filter(const struct sk_buff *skb,
-				      const struct sock *sk,
-				      unsigned int res)
+static unsigned int run_filter(struct sk_buff *skb,
+			      const struct sock *sk,
+			      unsigned int res)
 {
 	struct sk_filter *filter;
 
 	rcu_read_lock();
 	filter = rcu_dereference(sk->sk_filter);
 	if (filter != NULL)
-		res = SK_RUN_FILTER(filter, skb);
+		res = bpf_prog_run_clear_cb(filter->prog, skb);
 	rcu_read_unlock();
 
 	return res;

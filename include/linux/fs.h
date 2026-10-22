@@ -244,6 +244,7 @@ struct inodes_stat_t {
 #define S_PRIVATE	512	/* Inode is fs-internal */
 #define S_IMA		1024	/* Inode has an associated IMA struct */
 #define S_AUTOMOUNT	2048	/* Automount/referral quasi-directory */
+#define S_VERITY	(1 << 16) /* fs-verity protected file */
 #define S_NOSEC		4096	/* no suid or xattr security attributes */
 
 /*
@@ -281,6 +282,7 @@ struct inodes_stat_t {
 #define IS_PRIVATE(inode)	((inode)->i_flags & S_PRIVATE)
 #define IS_IMA(inode)		((inode)->i_flags & S_IMA)
 #define IS_AUTOMOUNT(inode)	((inode)->i_flags & S_AUTOMOUNT)
+#define IS_VERITY(inode)		((inode)->i_flags & S_VERITY)
 #define IS_NOSEC(inode)		((inode)->i_flags & S_NOSEC)
 
 /* the read-only stuff doesn't really belong here, but any other place is
@@ -335,6 +337,8 @@ struct inodes_stat_t {
 
 #define FIDTRIM	_IOWR('f', 128, struct fstrim_range)	/* Deep discard trim */
 
+#define RENAME_NOREPLACE (1<<0)
+
 #define	FS_IOC_GETFLAGS			_IOR('f', 1, long)
 #define	FS_IOC_SETFLAGS			_IOW('f', 2, long)
 #define	FS_IOC_GETVERSION		_IOR('v', 1, long)
@@ -388,6 +392,7 @@ struct fscrypt_policy {
 #define FS_DIRSYNC_FL			0x00010000 /* dirsync behaviour (directories only) */
 #define FS_TOPDIR_FL			0x00020000 /* Top of directory hierarchies*/
 #define FS_EXTENT_FL			0x00080000 /* Extents */
+#define FS_VERITY_FL			0x00100000 /* fs-verity protected inode */
 #define FS_DIRECTIO_FL			0x00100000 /* Use direct i/o */
 #define FS_NOCOW_FL			0x00800000 /* Do not cow file */
 #define FS_RESERVED_FL			0x80000000 /* reserved for ext2 lib */
@@ -815,6 +820,9 @@ struct posix_acl;
  * the RCU path lookup and 'stat' data) fields at the beginning
  * of the 'struct inode'
  */
+struct fsverity_info;
+struct fsverity_operations;
+
 struct inode {
 	umode_t			i_mode;
 	unsigned short		i_opflags;
@@ -909,6 +917,9 @@ struct inode {
 #endif
 
 	void			*i_private; /* fs or device private pointer */
+#ifdef CONFIG_FS_VERITY
+	struct fsverity_info	*i_verity_info;
+#endif
 };
 
 static inline int inode_unhashed(struct inode *inode)
@@ -1077,6 +1088,11 @@ struct file {
 #endif
 };
 
+static inline struct inode *file_inode(const struct file *file)
+{
+ return file->f_path.dentry->d_inode;
+}
+
 struct file_handle {
 	__u32 handle_bytes;
 	int handle_type;
@@ -1150,6 +1166,7 @@ static inline int file_check_writeable(struct file *filp)
 #define FL_SLEEP	128	/* A blocking lock */
 #define FL_DOWNGRADE_PENDING	256 /* Lease is being downgraded */
 #define FL_UNLOCK_PENDING	512 /* Lease is being broken */
+#define FL_OFDLCK	1024	/* lock is private to the file */
 
 /*
  * Special return value from posix_lock_file() and vfs_lock_file() for
@@ -1234,12 +1251,12 @@ struct file_lock {
 extern void send_sigio(struct fown_struct *fown, int fd, int band);
 
 #ifdef CONFIG_FILE_LOCKING
-extern int fcntl_getlk(struct file *, struct flock __user *);
+extern int fcntl_getlk(struct file *, unsigned int, struct flock __user *);
 extern int fcntl_setlk(unsigned int, struct file *, unsigned int,
 			struct flock __user *);
 
 #if BITS_PER_LONG == 32
-extern int fcntl_getlk64(struct file *, struct flock64 __user *);
+extern int fcntl_getlk64(struct file *, unsigned int, struct flock64 __user *);
 extern int fcntl_setlk64(unsigned int, struct file *, unsigned int,
 			struct flock64 __user *);
 #endif
@@ -1254,7 +1271,7 @@ extern struct file_lock * locks_alloc_lock(void);
 extern void locks_copy_lock(struct file_lock *, struct file_lock *);
 extern void __locks_copy_lock(struct file_lock *, const struct file_lock *);
 extern void locks_remove_posix(struct file *, fl_owner_t);
-extern void locks_remove_flock(struct file *);
+extern void locks_remove_file(struct file *);
 extern void locks_release_private(struct file_lock *);
 extern void posix_test_lock(struct file *, struct file_lock *);
 extern int posix_lock_file(struct file *, struct file_lock *, struct file_lock *);
@@ -1275,7 +1292,8 @@ extern void locks_delete_block(struct file_lock *waiter);
 extern void lock_flocks(void);
 extern void unlock_flocks(void);
 #else /* !CONFIG_FILE_LOCKING */
-static inline int fcntl_getlk(struct file *file, struct flock __user *user)
+static inline int fcntl_getlk(struct file *file, unsigned int cmd,
+			    struct flock __user *user)
 {
 	return -EINVAL;
 }
@@ -1287,7 +1305,8 @@ static inline int fcntl_setlk(unsigned int fd, struct file *file,
 }
 
 #if BITS_PER_LONG == 32
-static inline int fcntl_getlk64(struct file *file, struct flock64 __user *user)
+static inline int fcntl_getlk64(struct file *file, unsigned int cmd,
+				struct flock64 __user *user)
 {
 	return -EINVAL;
 }
@@ -1328,7 +1347,7 @@ static inline void locks_remove_posix(struct file *filp, fl_owner_t owner)
 	return;
 }
 
-static inline void locks_remove_flock(struct file *filp)
+static inline void locks_remove_file(struct file *filp)
 {
 	return;
 }
@@ -1480,6 +1499,9 @@ struct super_block {
 	loff_t			s_maxbytes;	/* Max file size */
 	struct file_system_type	*s_type;
 	const struct super_operations	*s_op;
+#ifdef CONFIG_FS_VERITY
+	const struct fsverity_operations *s_vop;
+#endif
 	const struct dquot_operations	*dq_op;
 	const struct quotactl_ops	*s_qcop;
 	const struct export_operations *s_export_op;
@@ -1664,6 +1686,11 @@ int fiemap_check_flags(struct fiemap_extent_info *fieinfo, u32 fs_flags);
  * to have different dirent layouts depending on the binary type.
  */
 typedef int (*filldir_t)(void *, const char *, int, loff_t, u64, unsigned);
+struct dir_context {
+	const filldir_t actor;
+	loff_t pos;
+};
+
 struct block_device_operations;
 
 /* These macros are for out of kernel modules to test that
@@ -1671,6 +1698,8 @@ struct block_device_operations;
  * fields in struct file_operations. */
 #define HAVE_COMPAT_IOCTL 1
 #define HAVE_UNLOCKED_IOCTL 1
+
+struct seq_file;
 
 struct file_operations {
 	struct module *owner;
@@ -1680,6 +1709,7 @@ struct file_operations {
 	ssize_t (*aio_read) (struct kiocb *, const struct iovec *, unsigned long, loff_t);
 	ssize_t (*aio_write) (struct kiocb *, const struct iovec *, unsigned long, loff_t);
 	int (*readdir) (struct file *, void *, filldir_t);
+	int (*iterate) (struct file *, struct dir_context *);
 	unsigned int (*poll) (struct file *, struct poll_table_struct *);
 	long (*unlocked_ioctl) (struct file *, unsigned int, unsigned long);
 	long (*compat_ioctl) (struct file *, unsigned int, unsigned long);
@@ -1700,6 +1730,7 @@ struct file_operations {
 	int (*setlease)(struct file *, long, struct file_lock **);
 	long (*fallocate)(struct file *file, int mode, loff_t offset,
 			  loff_t len);
+	int (*show_fdinfo)(struct seq_file *m, struct file *f);
 };
 
 struct inode_operations {
@@ -1738,8 +1769,6 @@ struct inode_operations {
 	int (*tmpfile) (struct inode *, struct dentry *, umode_t);
 	int (*set_acl)(struct inode *, struct posix_acl *, int);
 } ____cacheline_aligned;
-
-struct seq_file;
 
 ssize_t rw_copy_check_uvector(int type, const struct iovec __user * uvector,
 			      unsigned long nr_segs, unsigned long fast_segs,
@@ -1821,8 +1850,8 @@ struct super_operations {
  * I_FREEING		Set when inode is about to be freed but still has dirty
  *			pages or buffers attached or the inode itself is still
  *			dirty.
- * I_CLEAR		Added by end_writeback().  In this state the inode is clean
- *			and can be destroyed.  Inode keeps I_FREEING.
+ * I_CLEAR		Added by clear_inode().  In this state the inode is
+ *			clean and can be destroyed.  Inode keeps I_FREEING.
  *
  *			Inodes that are I_WILL_FREE, I_FREEING or I_CLEAR are
  *			prohibited for many purposes.  iget() must wait for
@@ -2447,7 +2476,7 @@ extern unsigned int get_next_ino(void);
 
 extern void __iget(struct inode * inode);
 extern void iget_failed(struct inode *);
-extern void end_writeback(struct inode *);
+extern void clear_inode(struct inode *);
 extern void __destroy_inode(struct inode *);
 extern struct inode *new_inode_pseudo(struct super_block *sb);
 extern struct inode *new_inode(struct super_block *sb);
@@ -2597,7 +2626,7 @@ void inode_sub_bytes(struct inode *inode, loff_t bytes);
 loff_t inode_get_bytes(struct inode *inode);
 void inode_set_bytes(struct inode *inode, loff_t bytes);
 
-extern int vfs_readdir(struct file *, filldir_t, void *);
+extern int iterate_dir(struct file *, struct dir_context *);
 
 extern int vfs_stat(const char __user *, struct kstat *);
 extern int vfs_lstat(const char __user *, struct kstat *);
@@ -2628,7 +2657,7 @@ extern void iterate_supers_type(struct file_system_type *,
 extern int dcache_dir_open(struct inode *, struct file *);
 extern int dcache_dir_close(struct inode *, struct file *);
 extern loff_t dcache_dir_lseek(struct file *, loff_t, int);
-extern int dcache_readdir(struct file *, void *, filldir_t);
+extern int dcache_readdir(struct file *, struct dir_context *);
 extern int simple_setattr(struct dentry *, struct iattr *);
 extern int simple_getattr(struct vfsmount *, struct dentry *, struct kstat *);
 extern int simple_statfs(struct dentry *, struct kstatfs *);
@@ -2790,6 +2819,37 @@ static inline void inode_has_no_xattr(struct inode *inode)
 {
 	if (!is_sxid(inode->i_mode) && (inode->i_sb->s_flags & MS_NOSEC))
 		inode->i_flags |= S_NOSEC;
+}
+
+static inline bool dir_emit(struct dir_context *ctx,
+			    const char *name, int namelen,
+			    u64 ino, unsigned type)
+{
+	return ctx->actor(ctx, name, namelen, ctx->pos, ino, type) == 0;
+}
+static inline bool dir_emit_dot(struct file *file, struct dir_context *ctx)
+{
+	return ctx->actor(ctx, ".", 1, ctx->pos,
+			  file->f_path.dentry->d_inode->i_ino, DT_DIR) == 0;
+}
+static inline bool dir_emit_dotdot(struct file *file, struct dir_context *ctx)
+{
+	return ctx->actor(ctx, "..", 2, ctx->pos,
+			  parent_ino(file->f_path.dentry), DT_DIR) == 0;
+}
+static inline bool dir_emit_dots(struct file *file, struct dir_context *ctx)
+{
+	if (ctx->pos == 0) {
+		if (!dir_emit_dot(file, ctx))
+			return false;
+		ctx->pos = 1;
+	}
+	if (ctx->pos == 1) {
+		if (!dir_emit_dotdot(file, ctx))
+			return false;
+		ctx->pos = 2;
+	}
+	return true;
 }
 
 #endif /* __KERNEL__ */

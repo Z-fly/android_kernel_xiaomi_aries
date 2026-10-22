@@ -956,7 +956,8 @@ static void tcp_v6_send_reset(struct sock *sk, struct sk_buff *skb)
 		 * no RST generated if md5 hash doesn't match.
 		 */
 		sk1 = inet6_lookup_listener(dev_net(skb_dst(skb)->dev),
-					   &tcp_hashinfo, &ipv6h->daddr,
+					   &tcp_hashinfo, &ipv6h->saddr,
+					   th->source, &ipv6h->daddr,
 					   ntohs(th->source), inet6_iif(skb));
 		if (!sk1)
 			return;
@@ -1143,6 +1144,8 @@ static int tcp_v6_conn_request(struct sock *sk, struct sk_buff *skb)
 
 	tmp_opt.tstamp_ok = tmp_opt.saw_tstamp;
 	tcp_openreq_init(req, &tmp_opt, skb);
+	inet_rsk(req)->ireq_net = sock_net(sk);
+	atomic64_set(&inet_rsk(req)->ir_cookie, 0);
 
 	treq = inet6_rsk(req);
 	treq->rmt_addr = ipv6_hdr(skb)->saddr;
@@ -1486,10 +1489,6 @@ static int tcp_v6_do_rcv(struct sock *sk, struct sk_buff *skb)
 	if (tcp_v6_inbound_md5_hash (sk, skb))
 		goto discard;
 #endif
-
-	if (sk_filter(sk, skb))
-		goto discard;
-
 	/*
 	 *	socket locking is here for SMP purposes as backlog rcv
 	 *	is currently called with bh processing disabled.
@@ -1647,12 +1646,15 @@ process:
 	if (!xfrm6_policy_check(sk, XFRM_POLICY_IN, skb))
 		goto discard_and_relse;
 
-	if (sk_filter(sk, skb))
+	if (tcp_filter(sk, skb))
 		goto discard_and_relse;
+	th = (const struct tcphdr *)skb->data;
+	hdr = ipv6_hdr(skb);
 
 	skb->dev = NULL;
 
 	bh_lock_sock_nested(sk);
+	tcp_sk(sk)->segs_in += max_t(u16, 1, skb_shinfo(skb)->gso_segs);
 	ret = 0;
 	if (!sock_owned_by_user(sk)) {
 #ifdef CONFIG_NET_DMA
@@ -1719,6 +1721,7 @@ do_time_wait:
 		struct sock *sk2;
 
 		sk2 = inet6_lookup_listener(dev_net(skb->dev), &tcp_hashinfo,
+					    &ipv6_hdr(skb)->saddr, th->source,
 					    &ipv6_hdr(skb)->daddr,
 					    ntohs(th->dest), inet6_iif(skb));
 		if (sk2 != NULL) {

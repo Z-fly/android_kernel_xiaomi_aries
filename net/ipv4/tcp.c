@@ -285,6 +285,8 @@
 
 int sysctl_tcp_fin_timeout __read_mostly = TCP_FIN_TIMEOUT;
 
+int sysctl_tcp_min_tso_segs __read_mostly = 2;
+
 struct percpu_counter tcp_orphan_count;
 EXPORT_SYMBOL_GPL(tcp_orphan_count);
 
@@ -312,6 +314,7 @@ EXPORT_SYMBOL(tcp_sockets_allocated);
  * TCP splice context
  */
 struct tcp_splice_state {
+	struct sock *sk;
 	struct pipe_inode_info *pipe;
 	size_t len;
 	unsigned int flags;
@@ -584,8 +587,9 @@ static int tcp_splice_data_recv(read_descriptor_t *rd_desc, struct sk_buff *skb,
 	struct tcp_splice_state *tss = rd_desc->arg.data;
 	int ret;
 
-	ret = skb_splice_bits(skb, offset, tss->pipe, min(rd_desc->count, len),
-			      tss->flags);
+	ret = skb_splice_bits(skb, tss->sk, offset, tss->pipe,
+			      min(rd_desc->count, len), tss->flags,
+			      skb_socket_splice);
 	if (ret > 0)
 		rd_desc->count -= ret;
 	return ret;
@@ -620,6 +624,7 @@ ssize_t tcp_splice_read(struct socket *sock, loff_t *ppos,
 {
 	struct sock *sk = sock->sk;
 	struct tcp_splice_state tss = {
+		.sk = sk,
 		.pipe = pipe,
 		.len = len,
 		.flags = flags,
@@ -733,10 +738,24 @@ static unsigned int tcp_xmit_size_goal(struct sock *sk, u32 mss_now,
 	xmit_size_goal = mss_now;
 
 	if (large_allowed && sk_can_gso(sk)) {
-		xmit_size_goal = ((sk->sk_gso_max_size - 1) -
-				  inet_csk(sk)->icsk_af_ops->net_header_len -
-				  inet_csk(sk)->icsk_ext_hdr_len -
-				  tp->tcp_header_len);
+		u32 gso_size, hlen;
+
+		/* Maybe we should/could use sk->sk_prot->max_header here ? */
+		hlen = inet_csk(sk)->icsk_af_ops->net_header_len +
+		       inet_csk(sk)->icsk_ext_hdr_len +
+		       tp->tcp_header_len;
+
+		/* Goal is to send at least one packet per ms,
+		 * not one big TSO packet every 100 ms.
+		 * This preserves ACK clocking and is consistent
+		 * with tcp_tso_should_defer() heuristic.
+		 */
+		gso_size = sk->sk_pacing_rate / (2 * MSEC_PER_SEC);
+		gso_size = max_t(u32, gso_size,
+				 sysctl_tcp_min_tso_segs * mss_now);
+
+		xmit_size_goal = min_t(u32, gso_size,
+				       sk->sk_gso_max_size - 1 - hlen);
 
 		xmit_size_goal = tcp_bound_to_half_wnd(tp, xmit_size_goal);
 
@@ -2140,7 +2159,6 @@ int tcp_disconnect(struct sock *sk, int flags)
 	tp->packets_out = 0;
 	tp->snd_ssthresh = TCP_INFINITE_SSTHRESH;
 	tp->snd_cwnd_cnt = 0;
-	tp->bytes_acked = 0;
 	tp->window_clamp = 0;
 	tcp_set_ca_state(sk, TCP_CA_Open);
 	tcp_clear_retrans(tp);
@@ -2479,11 +2497,12 @@ EXPORT_SYMBOL(compat_tcp_setsockopt);
 #endif
 
 /* Return information about state of tcp endpoint in API format. */
-void tcp_get_info(const struct sock *sk, struct tcp_info *info)
+void tcp_get_info(struct sock *sk, struct tcp_info *info)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
 	const struct inet_connection_sock *icsk = inet_csk(sk);
 	u32 now = tcp_time_stamp;
+	unsigned int start;
 
 	memset(info, 0, sizeof(*info));
 
@@ -2541,6 +2560,19 @@ void tcp_get_info(const struct sock *sk, struct tcp_info *info)
 	info->tcpi_rcv_space = tp->rcvq_space.space;
 
 	info->tcpi_total_retrans = tp->total_retrans;
+
+	info->tcpi_pacing_rate = sk->sk_pacing_rate != ~0U ?
+					sk->sk_pacing_rate : ~0ULL;
+	info->tcpi_max_pacing_rate = sk->sk_max_pacing_rate != ~0U ?
+					sk->sk_max_pacing_rate : ~0ULL;
+
+	do {
+		start = u64_stats_fetch_begin_irq(&tp->syncp);
+		info->tcpi_bytes_acked = tp->bytes_acked;
+		info->tcpi_bytes_received = tp->bytes_received;
+	} while (u64_stats_fetch_retry_irq(&tp->syncp, start));
+	info->tcpi_segs_out = tp->segs_out;
+	info->tcpi_segs_in = tp->segs_in;
 
 	if (sk->sk_socket) {
 		struct file *filep = sk->sk_socket->file;

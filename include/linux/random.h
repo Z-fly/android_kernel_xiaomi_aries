@@ -10,6 +10,8 @@
 #include <linux/types.h>
 #include <linux/ioctl.h>
 #include <linux/irqnr.h>
+#include <linux/percpu.h>
+#include <linux/once.h>
 
 /* ioctl()'s for the random number generator */
 
@@ -69,6 +71,8 @@ unsigned long randomize_range(unsigned long start, unsigned long end, unsigned l
 u32 prandom_u32(void);
 void prandom_bytes(void *buf, int nbytes);
 void prandom_seed(u32 seed);
+void prandom_seed_full_state(struct rnd_state __percpu *pcpu_state);
+#define prandom_init_once(pcpu_state) DO_ONCE(prandom_seed_full_state, pcpu_state)
 void prandom_reseed_late(void);
 
 /*
@@ -114,7 +118,29 @@ static inline int arch_get_random_int(unsigned int *v)
 {
 	return 0;
 }
+static inline int arch_has_random(void)
+{
+	return 0;
+}
+static inline int arch_get_random_seed_long(unsigned long *v)
+{
+	return 0;
+}
+static inline int arch_get_random_seed_int(unsigned int *v)
+{
+	return 0;
+}
+static inline int arch_has_random_seed(void)
+{
+	return 0;
+}
 #endif
+
+/* Pseudo random number generator from numerical recipes. */
+static inline u32 next_pseudo_random32(u32 seed)
+{
+	return seed * 1664525 + 1013904223;
+}
 
 /*
  * Flags for getrandom(2)

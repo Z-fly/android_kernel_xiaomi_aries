@@ -37,21 +37,13 @@
 static int do_execute_actions(struct datapath *dp, struct sk_buff *skb,
 			const struct nlattr *attr, int len, bool keep_skb);
 
-static int make_writable(struct sk_buff *skb, int write_len)
-{
-	if (!skb_cloned(skb) || skb_clone_writable(skb, write_len))
-		return 0;
-
-	return pskb_expand_head(skb, 0, 0, GFP_ATOMIC);
-}
-
 /* remove VLAN header from packet and update csum accrodingly. */
 static int __pop_vlan_tci(struct sk_buff *skb, __be16 *current_tci)
 {
 	struct vlan_hdr *vhdr;
 	int err;
 
-	err = make_writable(skb, VLAN_ETH_HLEN);
+	err = skb_ensure_writable(skb, VLAN_ETH_HLEN);
 	if (unlikely(err))
 		return err;
 
@@ -97,7 +89,7 @@ static int pop_vlan(struct sk_buff *skb)
 	if (unlikely(err))
 		return err;
 
-	__vlan_hwaccel_put_tag(skb, ntohs(tci));
+	__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), ntohs(tci));
 	return 0;
 }
 
@@ -109,7 +101,7 @@ static int push_vlan(struct sk_buff *skb, const struct ovs_action_push_vlan *vla
 		/* push down current VLAN tag */
 		current_tag = vlan_tx_tag_get(skb);
 
-		if (!__vlan_put_tag(skb, current_tag))
+		if (!__vlan_put_tag(skb, skb->vlan_proto, current_tag))
 			return -ENOMEM;
 
 		if (skb->ip_summed == CHECKSUM_COMPLETE)
@@ -117,7 +109,7 @@ static int push_vlan(struct sk_buff *skb, const struct ovs_action_push_vlan *vla
 					+ ETH_HLEN, VLAN_HLEN, 0));
 
 	}
-	__vlan_hwaccel_put_tag(skb, ntohs(vlan->vlan_tci) & ~VLAN_TAG_PRESENT);
+	__vlan_hwaccel_put_tag(skb, vlan->vlan_tpid, ntohs(vlan->vlan_tci) & ~VLAN_TAG_PRESENT);
 	return 0;
 }
 
@@ -125,7 +117,7 @@ static int set_eth_addr(struct sk_buff *skb,
 			const struct ovs_key_ethernet *eth_key)
 {
 	int err;
-	err = make_writable(skb, ETH_HLEN);
+	err = skb_ensure_writable(skb, ETH_HLEN);
 	if (unlikely(err))
 		return err;
 
@@ -173,7 +165,7 @@ static int set_ipv4(struct sk_buff *skb, const struct ovs_key_ipv4 *ipv4_key)
 	struct iphdr *nh;
 	int err;
 
-	err = make_writable(skb, skb_network_offset(skb) +
+	err = skb_ensure_writable(skb, skb_network_offset(skb) +
 				 sizeof(struct iphdr));
 	if (unlikely(err))
 		return err;
@@ -195,7 +187,7 @@ static int set_ipv4(struct sk_buff *skb, const struct ovs_key_ipv4 *ipv4_key)
 	return 0;
 }
 
-/* Must follow make_writable() since that can move the skb data. */
+/* Must follow skb_ensure_writable() since that can move the skb data. */
 static void set_tp_port(struct sk_buff *skb, __be16 *port,
 			 __be16 new_port, __sum16 *check)
 {
@@ -224,7 +216,7 @@ static int set_udp(struct sk_buff *skb, const struct ovs_key_udp *udp_port_key)
 	struct udphdr *uh;
 	int err;
 
-	err = make_writable(skb, skb_transport_offset(skb) +
+	err = skb_ensure_writable(skb, skb_transport_offset(skb) +
 				 sizeof(struct udphdr));
 	if (unlikely(err))
 		return err;
@@ -244,7 +236,7 @@ static int set_tcp(struct sk_buff *skb, const struct ovs_key_tcp *tcp_port_key)
 	struct tcphdr *th;
 	int err;
 
-	err = make_writable(skb, skb_transport_offset(skb) +
+	err = skb_ensure_writable(skb, skb_transport_offset(skb) +
 				 sizeof(struct tcphdr));
 	if (unlikely(err))
 		return err;

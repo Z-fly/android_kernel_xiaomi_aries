@@ -47,6 +47,7 @@
 /* Socket filtering */
 #define SO_ATTACH_FILTER        26
 #define SO_DETACH_FILTER        27
+#define SO_GET_FILTER		SO_ATTACH_FILTER
 
 #define SO_PEERNAME		28
 #define SO_TIMESTAMP		29
@@ -82,5 +83,20 @@
  */
 #define SOCK_NONBLOCK	0x40000000
 #endif /* __KERNEL__ */
+
+
+#define SO_MAX_PACING_RATE	46
+#define SO_ATTACH_BPF		50
+#define SO_DETACH_BPF		SO_DETACH_FILTER
+
+
+#define SO_REUSEPORT	0x0200
+
+
+#define SO_ATTACH_REUSEPORT_CBPF	51
+#define SO_ATTACH_REUSEPORT_EBPF	52
+
+
+#define SO_LOCK_FILTER		44
 
 #endif /* _ASM_SOCKET_H */

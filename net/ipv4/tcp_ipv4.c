@@ -641,7 +641,8 @@ static void tcp_v4_send_reset(struct sock *sk, struct sk_buff *skb)
 		 * no RST generated if md5 hash doesn't match.
 		 */
 		sk1 = __inet_lookup_listener(dev_net(skb_dst(skb)->dev),
-					     &tcp_hashinfo, ip_hdr(skb)->daddr,
+					     &tcp_hashinfo, ip_hdr(skb)->saddr,
+					     th->source, ip_hdr(skb)->daddr,
 					     ntohs(th->source), inet_iif(skb));
 		/* don't send rst if it can't find key */
 		if (!sk1)
@@ -1349,6 +1350,8 @@ int tcp_v4_conn_request(struct sock *sk, struct sk_buff *skb)
 
 	tmp_opt.tstamp_ok = tmp_opt.saw_tstamp;
 	tcp_openreq_init(req, &tmp_opt, skb);
+	inet_rsk(req)->ireq_net = sock_net(sk);
+	atomic64_set(&inet_rsk(req)->ir_cookie, 0);
 
 	ireq = inet_rsk(req);
 	ireq->loc_addr = daddr;
@@ -1661,6 +1664,21 @@ csum_err:
 }
 EXPORT_SYMBOL(tcp_v4_do_rcv);
 
+int tcp_filter(struct sock *sk, struct sk_buff *skb)
+{
+	struct tcphdr *th = (struct tcphdr *)skb->data;
+	unsigned int eaten = skb->len;
+	int err;
+
+	err = sk_filter_trim_cap(sk, skb, th->doff * 4);
+	if (!err) {
+		eaten -= skb->len;
+		TCP_SKB_CB(skb)->end_seq -= eaten;
+	}
+	return err;
+}
+EXPORT_SYMBOL(tcp_filter);
+
 /*
  *	From tcp_input.c
  */
@@ -1723,12 +1741,15 @@ process:
 		goto discard_and_relse;
 	nf_reset(skb);
 
-	if (sk_filter(sk, skb))
+	if (tcp_filter(sk, skb))
 		goto discard_and_relse;
+	th = (const struct tcphdr *)skb->data;
+	iph = ip_hdr(skb);
 
 	skb->dev = NULL;
 
 	bh_lock_sock_nested(sk);
+	tcp_sk(sk)->segs_in += max_t(u16, 1, skb_shinfo(skb)->gso_segs);
 	ret = 0;
 	if (!sock_owned_by_user(sk)) {
 #ifdef CONFIG_NET_DMA
@@ -1789,6 +1810,7 @@ do_time_wait:
 	case TCP_TW_SYN: {
 		struct sock *sk2 = inet_lookup_listener(dev_net(skb->dev),
 							&tcp_hashinfo,
+							iph->saddr, th->source,
 							iph->daddr, th->dest,
 							inet_iif(skb));
 		if (sk2) {
@@ -1901,6 +1923,7 @@ static int tcp_v4_init_sock(struct sock *sk)
 	tp->snd_ssthresh = TCP_INFINITE_SSTHRESH;
 	tp->snd_cwnd_clamp = ~0;
 	tp->mss_cache = TCP_MSS_DEFAULT;
+	u64_stats_init(&tp->syncp);
 
 	tp->reordering = sysctl_tcp_reordering;
 	icsk->icsk_ca_ops = &tcp_init_congestion_ops;

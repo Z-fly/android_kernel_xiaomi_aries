@@ -379,6 +379,11 @@ extern struct dentry *dget_parent(struct dentry *dentry);
  *	Returns true if the dentry passed is not currently hashed.
  */
  
+static inline struct inode *d_inode(const struct dentry *dentry)
+{
+ return dentry->d_inode;
+}
+
 static inline int d_unhashed(struct dentry *dentry)
 {
 	return hlist_bl_unhashed(&dentry->d_hash);
@@ -428,6 +433,38 @@ static inline bool d_is_su(const struct dentry *dentry)
 }
 
 extern int sysctl_vfs_cache_pressure;
+
+/**
+ * d_backing_inode - Get upper or lower inode we should be using
+ * @upper: The upper layer
+ *
+ * This is the helper that should be used to get at the inode that will be used
+ * if this dentry were to be opened as a file.  The inode may be on the upper
+ * dentry or it may be on a lower dentry pinned by the upper.
+ *
+ * Normal filesystems should not use this to access their own inodes.
+ */
+static inline struct inode *d_backing_inode(const struct dentry *upper)
+{
+	struct inode *inode = upper->d_inode;
+
+	return inode;
+}
+
+/**
+ * d_backing_dentry - Get upper or lower dentry we should be using
+ * @upper: The upper layer
+ *
+ * This is the helper that should be used to get the dentry of the inode that
+ * will be used if this dentry were opened as a file.  It may be the upper
+ * dentry or it may be a lower dentry pinned by the upper.
+ *
+ * Normal filesystems should not use this to access their own dentries.
+ */
+static inline struct dentry *d_backing_dentry(struct dentry *upper)
+{
+	return upper;
+}
 
 struct name_snapshot {
 	const char *name;

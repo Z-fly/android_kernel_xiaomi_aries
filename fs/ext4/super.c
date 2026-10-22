@@ -1023,7 +1023,7 @@ static void destroy_inodecache(void)
 void ext4_clear_inode(struct inode *inode)
 {
 	invalidate_inode_buffers(inode);
-	end_writeback(inode);
+	clear_inode(inode);
 	dquot_drop(inode);
 	ext4_discard_preallocations(inode);
 	if (EXT4_I(inode)->jinode) {
@@ -3574,6 +3574,14 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	/*
 	 * set up enough so that it can read an inode
 	 */
+#ifdef CONFIG_FS_VERITY
+	if (EXT4_HAS_RO_COMPAT_FEATURE(sb, EXT4_FEATURE_RO_COMPAT_VERITY) &&
+	    sb->s_blocksize != PAGE_SIZE) {
+		ext4_msg(sb, KERN_ERR, "verity requires PAGE_SIZE blocks");
+		goto failed_mount_wq;
+	}
+	sb->s_vop = &ext4_verityops;
+#endif
 	if (!test_opt(sb, NOLOAD) &&
 	    EXT4_HAS_COMPAT_FEATURE(sb, EXT4_FEATURE_COMPAT_HAS_JOURNAL))
 		sb->s_op = &ext4_sops;

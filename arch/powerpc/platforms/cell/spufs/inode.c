@@ -152,7 +152,7 @@ static void
 spufs_evict_inode(struct inode *inode)
 {
 	struct spufs_inode_info *ei = SPUFS_I(inode);
-	end_writeback(inode);
+	clear_inode(inode);
 	if (ei->i_ctx)
 		put_spu_context(ei->i_ctx);
 	if (ei->i_gang)
@@ -257,7 +257,7 @@ const struct file_operations spufs_context_fops = {
 	.release	= spufs_dir_close,
 	.llseek		= dcache_dir_lseek,
 	.read		= generic_read_dir,
-	.readdir	= dcache_readdir,
+	.iterate	= dcache_readdir,
 	.fsync		= noop_fsync,
 };
 EXPORT_SYMBOL_GPL(spufs_context_fops);

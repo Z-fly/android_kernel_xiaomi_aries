@@ -1462,6 +1462,22 @@ int call_netdevice_notifiers(unsigned long val, struct net_device *dev)
 }
 EXPORT_SYMBOL(call_netdevice_notifiers);
 
+#ifdef CONFIG_NET_EGRESS
+static struct static_key egress_needed __read_mostly;
+
+void net_inc_egress_queue(void)
+{
+	static_key_slow_inc(&egress_needed);
+}
+EXPORT_SYMBOL_GPL(net_inc_egress_queue);
+
+void net_dec_egress_queue(void)
+{
+	static_key_slow_dec(&egress_needed);
+}
+EXPORT_SYMBOL_GPL(net_dec_egress_queue);
+#endif
+
 static struct static_key netstamp_needed __read_mostly;
 #ifdef HAVE_JUMP_LABEL
 /* We are not allowed to call static_key_slow_dec() from irq context
@@ -2204,8 +2220,9 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 		features = netif_skb_features(skb);
 
 		if (vlan_tx_tag_present(skb) &&
-		    !(features & NETIF_F_HW_VLAN_TX)) {
-			skb = __vlan_put_tag(skb, vlan_tx_tag_get(skb));
+		    !vlan_hw_offload_capable(features, skb->vlan_proto)) {
+			skb = __vlan_put_tag(skb, skb->vlan_proto,
+					     vlan_tx_tag_get(skb));
 			if (unlikely(!skb))
 				goto out;
 
@@ -2405,6 +2422,26 @@ static struct netdev_queue *dev_pick_tx(struct net_device *dev,
 	return netdev_get_tx_queue(dev, queue_index);
 }
 
+static void qdisc_pkt_len_init(struct sk_buff *skb)
+{
+	const struct skb_shared_info *shinfo = skb_shinfo(skb);
+
+	qdisc_skb_cb(skb)->pkt_len = skb->len;
+
+	/* To get more precise estimation of bytes sent on wire,
+	 * we add to pkt_len the headers size of all segments
+	 */
+	if (shinfo->gso_size)  {
+		unsigned int hdr_len = skb_transport_offset(skb);
+
+		if (likely(shinfo->gso_type & (SKB_GSO_TCPV4 | SKB_GSO_TCPV6)))
+			hdr_len += tcp_hdrlen(skb);
+		else
+			hdr_len += sizeof(struct udphdr);
+		qdisc_skb_cb(skb)->pkt_len += (shinfo->gso_segs - 1) * hdr_len;
+	}
+}
+
 static inline int __dev_xmit_skb(struct sk_buff *skb, struct Qdisc *q,
 				 struct net_device *dev,
 				 struct netdev_queue *txq)
@@ -2413,7 +2450,6 @@ static inline int __dev_xmit_skb(struct sk_buff *skb, struct Qdisc *q,
 	bool contended;
 	int rc;
 
-	qdisc_skb_cb(skb)->pkt_len = skb->len;
 	qdisc_calculate_pkt_len(skb, q);
 	/*
 	 * Heuristic to force contended enqueues to serialize on a
@@ -2473,15 +2509,58 @@ static void skb_update_prio(struct sk_buff *skb)
 {
 	struct netprio_map *map = rcu_dereference_bh(skb->dev->priomap);
 
-	if ((!skb->priority) && (skb->sk) && map)
-		skb->priority = map->priomap[skb->sk->sk_cgrp_prioidx];
+	if (!skb->priority && skb->sk && map) {
+		unsigned int prioidx =
+			sock_cgroup_prioidx(&skb->sk->sk_cgrp_data);
+
+		if (prioidx < map->priomap_len)
+			skb->priority = map->priomap[prioidx];
+	}
 }
 #else
 #define skb_update_prio(skb)
 #endif
 
-static DEFINE_PER_CPU(int, xmit_recursion);
-#define RECURSION_LIMIT 10
+DEFINE_PER_CPU(int, xmit_recursion);
+
+#ifdef CONFIG_NET_EGRESS
+static struct sk_buff *sch_handle_egress(struct sk_buff *skb, int *ret,
+					struct net_device *dev)
+{
+	struct tcf_proto *cl = rcu_dereference_bh(dev->egress_cl_list);
+	struct tcf_result cl_res;
+
+	if (!cl)
+		return skb;
+
+	qdisc_bstats_update(cl->q, skb);
+
+	switch (tc_classify(skb, cl, &cl_res)) {
+	case TC_ACT_OK:
+	case TC_ACT_RECLASSIFY:
+		skb->tc_index = TC_H_MIN(cl_res.classid);
+		break;
+	case TC_ACT_SHOT:
+		cl->q->qstats.drops++;
+		*ret = NET_XMIT_DROP;
+		goto drop;
+	case TC_ACT_STOLEN:
+	case TC_ACT_QUEUED:
+		*ret = NET_XMIT_SUCCESS;
+drop:
+		kfree_skb(skb);
+		return NULL;
+	case TC_ACT_REDIRECT:
+		skb_do_redirect(skb);
+		*ret = NET_XMIT_SUCCESS;
+		return NULL;
+	default:
+		break;
+	}
+
+	return skb;
+}
+#endif
 
 /**
  *	dev_queue_xmit - transmit a buffer
@@ -2521,13 +2600,21 @@ int dev_queue_xmit(struct sk_buff *skb)
 	rcu_read_lock_bh();
 
 	skb_update_prio(skb);
-
-	txq = dev_pick_tx(dev, skb);
-	q = rcu_dereference_bh(txq->qdisc);
+	qdisc_pkt_len_init(skb);
 
 #ifdef CONFIG_NET_CLS_ACT
 	skb->tc_verd = SET_TC_AT(skb->tc_verd, AT_EGRESS);
+#ifdef CONFIG_NET_EGRESS
+	if (static_key_false(&egress_needed)) {
+		skb = sch_handle_egress(skb, &rc, dev);
+		if (!skb)
+			goto out;
+	}
 #endif
+#endif
+
+	txq = dev_pick_tx(dev, skb);
+	q = rcu_dereference_bh(txq->qdisc);
 	trace_net_dev_queue(skb);
 	if (q->enqueue) {
 		rc = __dev_xmit_skb(skb, q, dev, txq);
@@ -2551,7 +2638,8 @@ int dev_queue_xmit(struct sk_buff *skb)
 
 		if (txq->xmit_lock_owner != cpu) {
 
-			if (__this_cpu_read(xmit_recursion) > RECURSION_LIMIT)
+                       if (unlikely(__this_cpu_read(xmit_recursion) >
+                                    XMIT_RECURSION_LIMIT))
 				goto recursion_alert;
 
 			HARD_TX_LOCK(dev, txq, cpu);
@@ -3102,6 +3190,16 @@ static inline struct sk_buff *handle_ing(struct sk_buff *skb,
 	case TC_ACT_STOLEN:
 		kfree_skb(skb);
 		return NULL;
+	case TC_ACT_REDIRECT:
+		/* skb_mac_header check was done by cls/act_bpf, so
+		 * we can safely push the L2 header back before
+		 * redirecting to another netdev
+		 */
+		__skb_push(skb, skb->mac_len);
+		skb_do_redirect(skb);
+		return NULL;
+	default:
+		break;
 	}
 
 out:
@@ -3186,7 +3284,8 @@ static int __netif_receive_skb(struct sk_buff *skb)
 	orig_dev = skb->dev;
 
 	skb_reset_network_header(skb);
-	skb_reset_transport_header(skb);
+	if (!skb_transport_header_was_set(skb))
+		skb_reset_transport_header(skb);
 	skb_reset_mac_len(skb);
 
 	pt_prev = NULL;

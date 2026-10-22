@@ -11,6 +11,7 @@
  * management can be a bitch. See 'mm/memory.c': 'copy_page_range()'
  */
 
+#include <linux/cpufreq_times.h>
 #include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/unistd.h>
@@ -171,6 +172,8 @@ static void account_kernel_stack(struct thread_info *ti, int account)
 
 void free_task(struct task_struct *tsk)
 {
+	cpufreq_task_times_exit(tsk);
+	cgroup_free(tsk);
 	account_kernel_stack(tsk->stack, -1);
 	free_thread_info(tsk->stack);
 	rt_mutex_debug_task_free(tsk);
@@ -402,7 +405,12 @@ static int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
 			goto fail_nomem_policy;
 		vma_set_policy(tmp, pol);
 		tmp->vm_mm = mm;
-		if (anon_vma_fork(tmp, mpnt))
+		if (tmp->vm_flags & VM_WIPEONFORK) {
+			/* VM_WIPEONFORK gets a clean slate in the child. */
+			tmp->anon_vma = NULL;
+			if (anon_vma_prepare(tmp))
+				goto fail_nomem_anon_vma_fork;
+		} else if (anon_vma_fork(tmp, mpnt))
 			goto fail_nomem_anon_vma_fork;
 		tmp->vm_flags &= ~VM_LOCKED;
 		tmp->vm_next = tmp->vm_prev = NULL;
@@ -445,7 +453,10 @@ static int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
 		rb_parent = &tmp->vm_rb;
 
 		mm->map_count++;
-		retval = copy_page_range(mm, oldmm, mpnt);
+		if (tmp->vm_flags & VM_WIPEONFORK)
+			retval = 0;
+		else
+			retval = copy_page_range(mm, oldmm, mpnt);
 
 		if (tmp->vm_ops && tmp->vm_ops->open)
 			tmp->vm_ops->open(tmp);
@@ -1231,6 +1242,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	p = dup_task_struct(current);
 	if (!p)
 		goto fork_out;
+	cpufreq_task_times_init(p);
 
 	ftrace_graph_init_task(p);
 
@@ -1452,6 +1464,16 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	p->group_leader = p;
 	INIT_LIST_HEAD(&p->thread_group);
 
+	/*
+	 * Ensure that the cgroup subsystem policies allow the new process to be
+	 * forked. It should be noted the the new process's css_set can be changed
+	 * between here and cgroup_post_fork() if an organisation operation is in
+	 * progress.
+	 */
+	retval = cgroup_can_fork(p);
+	if (retval)
+		goto bad_fork_free_pid;
+
 	/* Need tasklist lock for parent etc handling! */
 	write_lock_irq(&tasklist_lock);
 
@@ -1485,7 +1507,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		spin_unlock(&current->sighand->siglock);
 		write_unlock_irq(&tasklist_lock);
 		retval = -ERESTARTNOINTR;
-		goto bad_fork_free_pid;
+		goto bad_fork_cancel_cgroup;
 	}
 
 	if (likely(p->pid)) {
@@ -1531,6 +1553,8 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 
 	return p;
 
+bad_fork_cancel_cgroup:
+	cgroup_cancel_fork(p);
 bad_fork_free_pid:
 	if (pid != &init_struct_pid)
 		free_pid(pid);
@@ -1566,7 +1590,7 @@ bad_fork_cleanup_cgroup:
 #endif
 	if (clone_flags & CLONE_THREAD)
 		threadgroup_change_end(current);
-	cgroup_exit(p, 0);
+	cgroup_exit(p);
 	delayacct_tsk_free(p);
 	module_put(task_thread_info(p)->exec_domain->module);
 bad_fork_cleanup_count:
@@ -1666,6 +1690,7 @@ long do_fork(unsigned long clone_flags,
 	 * might get invalid after that point, if the thread exits quickly.
 	 */
 	if (!IS_ERR(p)) {
+		cpufreq_task_times_alloc(p);
 		struct completion vfork;
 
 		trace_sched_process_fork(current, p);
@@ -1746,7 +1771,7 @@ static int check_unshare_flags(unsigned long unshare_flags)
 {
 	if (unshare_flags & ~(CLONE_THREAD|CLONE_FS|CLONE_NEWNS|CLONE_SIGHAND|
 				CLONE_VM|CLONE_FILES|CLONE_SYSVSEM|
-				CLONE_NEWUTS|CLONE_NEWIPC|CLONE_NEWNET))
+				CLONE_NEWUTS|CLONE_NEWIPC|CLONE_NEWNET|CLONE_NEWCGROUP))
 		return -EINVAL;
 	/*
 	 * Not implemented, but pretend it works if there is nothing to

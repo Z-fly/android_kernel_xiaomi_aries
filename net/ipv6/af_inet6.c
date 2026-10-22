@@ -266,6 +266,14 @@ lookup_protocol:
 			goto out;
 		}
 	}
+
+	if (!kern) {
+		err = BPF_CGROUP_RUN_PROG_INET_SOCK(sk);
+		if (err) {
+			sk_common_release(sk);
+			goto out;
+		}
+	}
 out:
 	return err;
 out_rcu_unlock:
@@ -296,6 +304,10 @@ int inet6_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 
 	if (addr->sin6_family != AF_INET6)
 		return -EAFNOSUPPORT;
+
+	err = BPF_CGROUP_SOCK_ADDR_LOCK(sk, uaddr, addr_len, BPF_CGROUP_INET6_BIND);
+	if (err)
+		return err;
 
 	addr_type = ipv6_addr_type(&addr->sin6_addr);
 	if ((addr_type & IPV6_ADDR_MULTICAST) && sock->type == SOCK_STREAM)

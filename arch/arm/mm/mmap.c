@@ -9,6 +9,7 @@
 #include <linux/io.h>
 #include <linux/personality.h>
 #include <linux/random.h>
+#include <linux/security.h>
 #include <asm/cachetype.h>
 
 static inline unsigned long COLOUR_ALIGN_DOWN(unsigned long addr,
@@ -201,7 +202,7 @@ arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
 	}
 
 	/* make sure it can fit in the remaining address space */
-	if (addr > len) {
+	if (addr > len && addr - len >= mmap_min_addr) {
 		vma = find_vma(mm, addr-len);
 		if (!vma || addr <= vma->vm_start)
 			/* remember the address as a hint for next time */
@@ -216,6 +217,10 @@ arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
 		addr = COLOUR_ALIGN_DOWN(addr, pgoff);
 
 	do {
+		/* Skip the protected low hole and try the bottom-up fallback. */
+		if (addr < mmap_min_addr)
+			break;
+
 		/*
 		 * Lookup failure means no vma is above this address,
 		 * else if new region fits below vma->vm_start,

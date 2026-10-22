@@ -408,7 +408,7 @@ int sock_map_fd(struct socket *sock, int flags)
 }
 EXPORT_SYMBOL(sock_map_fd);
 
-static struct socket *sock_from_file(struct file *file, int *err)
+struct socket *sock_from_file(struct file *file, int *err)
 {
 	if (file->f_op == &socket_file_ops)
 		return file->private_data;	/* set in sock_map_fd */
@@ -416,6 +416,7 @@ static struct socket *sock_from_file(struct file *file, int *err)
 	*err = -ENOTSOCK;
 	return NULL;
 }
+EXPORT_SYMBOL(sock_from_file);
 
 /**
  *	sockfd_lookup - Go from a file number to its socket slot
@@ -638,9 +639,6 @@ static inline int __sock_sendmsg_nosec(struct kiocb *iocb, struct socket *sock,
 {
 	struct sock_iocb *si = kiocb_to_siocb(iocb);
 
-	sock_update_classid(sock->sk);
-
-	sock_update_netprioidx(sock->sk);
 
 	si->sock = sock;
 	si->scm = NULL;
@@ -792,7 +790,6 @@ static inline int __sock_recvmsg_nosec(struct kiocb *iocb, struct socket *sock,
 {
 	struct sock_iocb *si = kiocb_to_siocb(iocb);
 
-	sock_update_classid(sock->sk);
 
 	si->sock = sock;
 	si->scm = NULL;
@@ -904,7 +901,6 @@ static ssize_t sock_splice_read(struct file *file, loff_t *ppos,
 	if (unlikely(!sock->ops->splice_read))
 		return -EINVAL;
 
-	sock_update_classid(sock->sk);
 
 	return sock->ops->splice_read(sock, ppos, pipe, len, flags);
 }
@@ -1894,6 +1890,8 @@ SYSCALL_DEFINE5(setsockopt, int, fd, int, level, int, optname,
 {
 	int err, fput_needed;
 	struct socket *sock;
+	char *kernel_optval = NULL;
+	mm_segment_t oldfs = get_fs();
 
 	if (optlen < 0)
 		return -EINVAL;
@@ -1904,6 +1902,19 @@ SYSCALL_DEFINE5(setsockopt, int, fd, int, level, int, optname,
 		if (err)
 			goto out_put;
 
+		err = BPF_CGROUP_SETSOCKOPT(sock->sk, &level, &optname,
+					   optval, &optlen, &kernel_optval);
+		if (err < 0)
+			goto out_put;
+		if (err > 0) {
+			err = 0;
+			goto out_put;
+		}
+		if (kernel_optval) {
+			set_fs(KERNEL_DS);
+			optval = (char __user __force *)kernel_optval;
+		}
+
 		if (level == SOL_SOCKET)
 			err =
 			    sock_setsockopt(sock, level, optname, optval,
@@ -1912,6 +1923,10 @@ SYSCALL_DEFINE5(setsockopt, int, fd, int, level, int, optname,
 			err =
 			    sock->ops->setsockopt(sock, level, optname, optval,
 						  optlen);
+		if (kernel_optval) {
+			set_fs(oldfs);
+			kfree(kernel_optval);
+		}
 out_put:
 		fput_light(sock->file, fput_needed);
 	}
@@ -1928,12 +1943,20 @@ SYSCALL_DEFINE5(getsockopt, int, fd, int, level, int, optname,
 {
 	int err, fput_needed;
 	struct socket *sock;
+	int max_optlen = 0;
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock != NULL) {
 		err = security_socket_getsockopt(sock, level, optname);
 		if (err)
 			goto out_put;
+
+#ifdef CONFIG_CGROUP_BPF
+		if (cgroup_bpf_enabled && get_user(max_optlen, optlen)) {
+			err = -EFAULT;
+			goto out_put;
+		}
+#endif
 
 		if (level == SOL_SOCKET)
 			err =
@@ -1943,6 +1966,8 @@ SYSCALL_DEFINE5(getsockopt, int, fd, int, level, int, optname,
 			err =
 			    sock->ops->getsockopt(sock, level, optname, optval,
 						  optlen);
+		err = BPF_CGROUP_GETSOCKOPT(sock->sk, level, optname, optval,
+					   optlen, max_optlen, err);
 out_put:
 		fput_light(sock->file, fput_needed);
 	}
@@ -3481,7 +3506,6 @@ EXPORT_SYMBOL(kernel_setsockopt);
 int kernel_sendpage(struct socket *sock, struct page *page, int offset,
 		    size_t size, int flags)
 {
-	sock_update_classid(sock->sk);
 
 	if (sock->ops->sendpage)
 		return sock->ops->sendpage(sock, page, offset, size, flags);

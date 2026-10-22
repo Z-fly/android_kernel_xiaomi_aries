@@ -116,7 +116,6 @@ static int trace_define_common_fields(void)
 	__common_field(unsigned char, flags);
 	__common_field(unsigned char, preempt_count);
 	__common_field(int, pid);
-	__common_field(int, padding);
 
 	return ret;
 }
@@ -133,6 +132,24 @@ void trace_destroy_fields(struct ftrace_event_call *call)
 		kfree(field->name);
 		kfree(field);
 	}
+}
+
+/*
+ * run-time version of trace_event_get_offsets_<call>() that returns the last
+ * accessible offset of trace fields excluding __dynamic_array bytes
+ */
+int trace_event_get_offsets(struct ftrace_event_call *call)
+{
+	struct ftrace_event_field *tail;
+	struct list_head *head;
+
+	head = trace_get_fields(call);
+	/*
+	 * head->next points to the last field with the largest offset,
+	 * since it was added last by trace_define_field()
+	 */
+	tail = list_first_entry(head, struct ftrace_event_field, link);
+	return tail->offset + tail->size;
 }
 
 int trace_event_raw_init(struct ftrace_event_call *call)
@@ -1530,6 +1547,8 @@ static __init int event_trace_init(void)
 	ret = register_module_notifier(&trace_module_nb);
 	if (ret)
 		pr_warning("Failed to register trace events module notifier\n");
+
+	trace_printk_start_comm();
 
 	return 0;
 }

@@ -976,7 +976,20 @@ static void zoneinfo_show_print(struct seq_file *m, pg_data_t *pgdat,
 							struct zone *zone)
 {
 	int i;
+	struct zone *first = pgdat->node_zones;
+
+	while (first - pgdat->node_zones < MAX_NR_ZONES &&
+	       !populated_zone(first))
+		first++;
 	seq_printf(m, "Node %d, zone %8s", pgdat->node_id, zone->name);
+	/* File LRUs are node totals in the modern zoneinfo interface. */
+	if (zone == first)
+		seq_printf(m,
+			   "\n  per-node stats"
+			   "\n      nr_inactive_file %lu"
+			   "\n      nr_active_file %lu",
+			   node_page_state(pgdat->node_id, NR_INACTIVE_FILE),
+			   node_page_state(pgdat->node_id, NR_ACTIVE_FILE));
 	seq_printf(m,
 		   "\n  pages free     %lu"
 		   "\n        min      %lu"
@@ -1162,7 +1175,7 @@ static void __cpuinit start_cpu_timer(int cpu)
 {
 	struct delayed_work *work = &per_cpu(vmstat_work, cpu);
 
-	INIT_DELAYED_WORK_DEFERRABLE(work, vmstat_update);
+	INIT_DEFERRABLE_WORK(work, vmstat_update);
 	queue_delayed_work_on(cpu, vmstat_wq, work, __round_jiffies_relative(HZ, cpu));
 }
 

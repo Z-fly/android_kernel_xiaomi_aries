@@ -104,6 +104,7 @@ enum {
 #define TC_ACT_STOLEN		4
 #define TC_ACT_QUEUED		5
 #define TC_ACT_REPEAT		6
+#define TC_ACT_REDIRECT		7
 #define TC_ACT_JUMP		0x10000000
 
 /* Action type identifiers*/
@@ -375,6 +376,19 @@ enum {
 
 #define TCA_BASIC_MAX (__TCA_BASIC_MAX - 1)
 
+/* Match-all classifier; keep the netlink attribute numbers from upstream. */
+enum {
+	TCA_MATCHALL_UNSPEC,
+	TCA_MATCHALL_CLASSID,
+	TCA_MATCHALL_ACT,
+	TCA_MATCHALL_FLAGS,
+	__TCA_MATCHALL_MAX,
+};
+
+#define TCA_MATCHALL_MAX (__TCA_MATCHALL_MAX - 1)
+#define TCA_CLS_FLAGS_SKIP_HW (1 << 0)
+#define TCA_CLS_FLAGS_SKIP_SW (1 << 1)
+
 
 /* Cgroup classifier */
 
@@ -387,6 +401,25 @@ enum {
 };
 
 #define TCA_CGROUP_MAX (__TCA_CGROUP_MAX - 1)
+
+/* BPF classifier */
+
+#define TCA_BPF_FLAG_ACT_DIRECT		(1 << 0)
+
+enum {
+	TCA_BPF_UNSPEC,
+	TCA_BPF_ACT,
+	TCA_BPF_POLICE,
+	TCA_BPF_CLASSID,
+	TCA_BPF_OPS_LEN,
+	TCA_BPF_OPS,
+	TCA_BPF_FD,
+	TCA_BPF_NAME,
+	TCA_BPF_FLAGS,
+	__TCA_BPF_MAX,
+};
+
+#define TCA_BPF_MAX (__TCA_BPF_MAX - 1)
 
 /* Extended Matches */
 

@@ -128,4 +128,19 @@ enum sock_type {
 
 #endif /* __KERNEL__ */
 
+
+#define SO_MAX_PACING_RATE	46
+#define SO_ATTACH_BPF		50
+#define SO_DETACH_BPF		SO_DETACH_FILTER
+
+
+#define SO_REUSEPORT 0x0200	/* Allow local address and port reuse.  */
+
+
+#define SO_ATTACH_REUSEPORT_CBPF	51
+#define SO_ATTACH_REUSEPORT_EBPF	52
+
+
+#define SO_LOCK_FILTER		44
+
 #endif /* _ASM_SOCKET_H */

@@ -405,9 +405,15 @@
 #define __NR_process_vm_readv		(__NR_SYSCALL_BASE+376)
 #define __NR_process_vm_writev		(__NR_SYSCALL_BASE+377)
 #define __NR_finit_module		(__NR_SYSCALL_BASE+379)
+#define __NR_renameat2			(__NR_SYSCALL_BASE+382)
 #define __NR_seccomp			(__NR_SYSCALL_BASE+383)
 #define __NR_getrandom			(__NR_SYSCALL_BASE+384)
 #define __NR_memfd_create		(__NR_SYSCALL_BASE+385)
+#define __NR_bpf			(__NR_SYSCALL_BASE+386)
+#define __NR_statx			(__NR_SYSCALL_BASE+397)
+#define __NR_pidfd_send_signal		(__NR_SYSCALL_BASE+424)
+#define __NR_pidfd_open			(__NR_SYSCALL_BASE+434)
+#define __NR_process_mrelease		(__NR_SYSCALL_BASE+448)
 
 /*
  * The following SWIs are ARM private.

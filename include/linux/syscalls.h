@@ -44,6 +44,7 @@ struct sembuf;
 struct shmid_ds;
 struct sockaddr;
 struct stat;
+struct statx;
 struct stat64;
 struct statfs;
 struct statfs64;
@@ -766,6 +767,9 @@ asmlinkage long sys_linkat(int olddfd, const char __user *oldname,
 			   int newdfd, const char __user *newname, int flags);
 asmlinkage long sys_renameat(int olddfd, const char __user * oldname,
 			     int newdfd, const char __user * newname);
+asmlinkage long sys_renameat2(int olddfd, const char __user *oldname,
+			      int newdfd, const char __user *newname,
+			      unsigned int flags);
 asmlinkage long sys_futimesat(int dfd, const char __user *filename,
 			      struct timeval __user *utimes);
 asmlinkage long sys_faccessat(int dfd, const char __user *filename, int mode);
@@ -864,5 +868,13 @@ asmlinkage long sys_seccomp(unsigned int op, unsigned int flags,
 			    const char __user *uargs);
 asmlinkage long sys_getrandom(char __user *buf, size_t count,
 			      unsigned int flags);
+asmlinkage long sys_pidfd_open(pid_t pid, unsigned int flags);
+asmlinkage long sys_pidfd_send_signal(int pidfd, int sig,
+		struct siginfo __user *info, unsigned int flags);
+asmlinkage long sys_process_mrelease(int pidfd, unsigned int flags);
+
+
+asmlinkage long sys_statx(int dfd, const char __user *filename, int flags,
+			 unsigned int mask, struct statx __user *buffer);
 
 #endif

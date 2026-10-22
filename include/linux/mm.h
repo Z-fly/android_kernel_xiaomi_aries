@@ -62,6 +62,7 @@ extern int mmap_rnd_compat_bits __read_mostly;
 
 /* to align the pointer to the (next) page boundary */
 #define PAGE_ALIGN(addr) ALIGN(addr, PAGE_SIZE)
+#define PAGE_ALIGNED(addr) IS_ALIGNED((unsigned long)(addr), PAGE_SIZE)
 
 /*
  * Linux kernel virtual memory manager primitives.
@@ -127,6 +128,7 @@ extern unsigned int kobjsize(const void *objp);
 #endif
 #define VM_INSERTPAGE	0x02000000	/* The vma has had "vm_insert_page()" done on it */
 #define VM_NODUMP	0x04000000	/* Do not include in the core dump */
+#define VM_WIPEONFORK	0x08000000	/* Wipe VMA contents in child */
 
 #define VM_MIXEDMAP	0x10000000	/* Can contain "struct page" and pure PFN pages */
 #define VM_SAO		0x20000000	/* Strong Access Ordering (powerpc) */
@@ -332,6 +334,8 @@ static inline int is_vmalloc_or_module_addr(const void *x)
 	return 0;
 }
 #endif
+
+extern void kvfree(const void *addr);
 
 static inline void compound_lock(struct page *page)
 {
