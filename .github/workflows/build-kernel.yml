@@ -18,10 +18,10 @@ env:
   TOOLCHAIN_URL: https://developer.arm.com/-/cdn-downloads/permalink/legacy-linaro-gnu-toolchains/7.5-2019.12/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabi.tar.xz
   TOOLCHAIN_DIR: /opt/toolchain/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabi
   TOOLCHAIN_PREFIX: /opt/toolchain/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabi/bin/arm-linux-gnueabi-
-  KERNEL_RELEASE: 3.4.113-perf-KernelSU-0818
-  KERNEL_LOCALVERSION: -perf-KernelSU-0818
+  KERNEL_RELEASE: 3.4.113-perf-kernelsu-0818
+  KERNEL_LOCALVERSION: -perf-kernelsu-0818
   TZ: Asia/Shanghai
-  KBUILD_BUILD_TIMESTAMP: "Tue Aug 18 18:18:18 CST 2026"
+  KBUILD_BUILD_TIMESTAMP: "Sun Oct 18 18:18:18 CST 2026"
   KBUILD_BUILD_VERSION: "1"
   EXTRA_MAKE_ARGS: ${{ inputs.extra_make_args }}
 
